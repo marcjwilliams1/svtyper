@@ -930,6 +930,10 @@ class SplitRead(object):
         self.q2 = None
         self.is_soft_clip = False
 
+    def __repr__(self):
+        return "%s(%s:%d-%d)" % (self.query_name, self.read.query_name,
+                self.read.reference_start, self.read.reference_end)
+
     # the piece of each split alignemnt
     class SplitPiece(object):
         def __init__(self,
@@ -1504,9 +1508,7 @@ def sv_genotype(bam_string,
             # grab batch of reads from both sides of breakpoint
             read_batch = {}
             read_batch = gather_reads(sample, chromA, posA, ciA, z, read_batch)
-            #DEBUGprint("read_batch:", read_batch, len(read_batch))
             read_batch = gather_reads(sample, chromB, posB, ciB, z, read_batch)
-            #DEBUGprint("read_batch:", read_batch, len(read_batch))
 
             # initialize counts to zero
             ref_span, alt_span = 0, 0
@@ -1517,10 +1519,8 @@ def sv_genotype(bam_string,
             # ref_ciB = ciB
             ref_ciA = [0,0]
             ref_ciB = [0,0]
-            prims, splits = 0, 0
 
             for fragment in read_batch.values():
-                #DEBUGprint("len(primary)", len(fragment.primary_reads))
                 # boolean on whether to write the fragment
                 write_fragment = False
 
@@ -1532,28 +1532,33 @@ def sv_genotype(bam_string,
                 for read in fragment.primary_reads:
                     if (fragment.is_ref_seq(read, chromA, posA, ciA, min_aligned)
                         or fragment.is_ref_seq(read, chromB, posB, ciB, min_aligned)):
-                        prims+=1
-                        #DEBUGprint("OK-primary", prims)
+
 
                         p_reference = prob_mapq(read)
                         ref_seq += p_reference
-                        #DEBUGprint("p_ref, ref_seq:", p_reference, ref_seq)
 
                         read.set_tag('XV', 'R')
                         write_fragment = True
 
                 # get non-reference split-read support
                 for split in fragment.split_reads:
-                    splits += 1
 
                     split_lr = split.is_split_straddle(chromA, posA, ciA,
                                                        chromB, posB, ciB,
                                                        o1_is_reverse, o2_is_reverse,
                                                        svtype, split_slop)
                     if all(not s for s in split_lr):
-                        p_reference = prob_mapq(read)
-                        ref_seq += p_reference
-                        write_fragment = True
+                        # with long reads (nanopore), we can get a read that spans the break
+                        # with a deletion that supports the alternate scattered with a few spurious matches.
+                        #bases_aligned = read.get_overlap(posA, posB)
+                        bases_aligned = len(set(range(posA, posB)) - set(read.get_reference_positions()))
+                        if bases_aligned / float(posB - posA) > 0.95:
+                            ref_seq += bases_aligned / float(posB - posA)
+                            write_fragment = True
+                        else:
+                            alt_seq += 2 * (1 - bases_aligned / float(posB - posA))
+                            write_fragment = True
+                        continue
 
                     # p_alt = prob_mapq(split.query_left) * prob_mapq(split.query_right)
                     p_alt = (prob_mapq(split.query_left) * split_lr[0] + prob_mapq(split.query_right) * split_lr[1]) / 2.0
