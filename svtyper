@@ -542,7 +542,7 @@ class Library(object):
 
     # calculate the library's prevalence in the BAM file
     def calc_lib_prevalence(self):
-        max_count = 100000
+        max_count = 10
         lib_counter = 0
         read_counter = 0
 
@@ -559,7 +559,9 @@ class Library(object):
     def calc_read_length(self):
         max_rl = 0
         counter = 0
-        num_samp = 10000
+        num_samp = 10
+        self.read_length = 1000
+        return
         for read in self.bam.fetch():
             if read.get_tag('RG') not in self.readgroups:
                 continue
@@ -577,11 +579,16 @@ class Library(object):
         skip_counter = 0
         mads = 10
         ins_list = []
+        valueCounts = Counter()
+
+        self.hist = valueCounts
+        self.mean = 0
+        self.sd = 0
+        return
 
         # Each entry in valueCounts is a value, and its count is
         # the number of instances of that value observed in the dataset.
         # So valueCount[5] is the number of times 5 has been seen in the data.
-        valueCounts = Counter()
         for read in self.bam:
             if skip_counter < skip:
                 skip_counter += 1
@@ -1307,7 +1314,7 @@ def gather_reads(sample,
 
     for read in sample.bam.fetch(chrom,
                                  max(pos + ci[0] - fetch_flank, 0),
-                                 min(pos + ci[1] + fetch_flank, chrom_length)):
+                                 min(pos + ci[1] + fetch_flank + 1, chrom_length)):
         lib = sample.get_lib(read.get_tag('RG')) # get the read's library
         if (read.is_unmapped
             or read.is_duplicate
@@ -1391,7 +1398,7 @@ def sv_genotype(bam_string,
 
     # set variables for genotyping
     z = 3
-    split_slop = 3 # amount of slop around breakpoint to count splitters
+    split_slop = 15 # amount of slop around breakpoint to count splitters
     in_header = True
     header = []
     breakend_dict = {} # cache to hold unmatched generic breakends for genotyping
@@ -1497,7 +1504,9 @@ def sv_genotype(bam_string,
             # grab batch of reads from both sides of breakpoint
             read_batch = {}
             read_batch = gather_reads(sample, chromA, posA, ciA, z, read_batch)
+            #DEBUGprint("read_batch:", read_batch, len(read_batch))
             read_batch = gather_reads(sample, chromB, posB, ciB, z, read_batch)
+            #DEBUGprint("read_batch:", read_batch, len(read_batch))
 
             # initialize counts to zero
             ref_span, alt_span = 0, 0
@@ -1508,8 +1517,10 @@ def sv_genotype(bam_string,
             # ref_ciB = ciB
             ref_ciA = [0,0]
             ref_ciB = [0,0]
+            prims, splits = 0, 0
 
             for fragment in read_batch.values():
+                #DEBUGprint("len(primary)", len(fragment.primary_reads))
                 # boolean on whether to write the fragment
                 write_fragment = False
 
@@ -1521,20 +1532,29 @@ def sv_genotype(bam_string,
                 for read in fragment.primary_reads:
                     if (fragment.is_ref_seq(read, chromA, posA, ciA, min_aligned)
                         or fragment.is_ref_seq(read, chromB, posB, ciB, min_aligned)):
+                        prims+=1
+                        #DEBUGprint("OK-primary", prims)
 
                         p_reference = prob_mapq(read)
                         ref_seq += p_reference
+                        #DEBUGprint("p_ref, ref_seq:", p_reference, ref_seq)
 
                         read.set_tag('XV', 'R')
                         write_fragment = True
 
                 # get non-reference split-read support
                 for split in fragment.split_reads:
+                    splits += 1
 
                     split_lr = split.is_split_straddle(chromA, posA, ciA,
                                                        chromB, posB, ciB,
                                                        o1_is_reverse, o2_is_reverse,
                                                        svtype, split_slop)
+                    if all(not s for s in split_lr):
+                        p_reference = prob_mapq(read)
+                        ref_seq += p_reference
+                        write_fragment = True
+
                     # p_alt = prob_mapq(split.query_left) * prob_mapq(split.query_right)
                     p_alt = (prob_mapq(split.query_left) * split_lr[0] + prob_mapq(split.query_right) * split_lr[1]) / 2.0
                     if split.is_soft_clip:
@@ -1650,8 +1670,8 @@ def sv_genotype(bam_string,
                 if var.info['SVTYPE'] == "DUP": is_dup = True
                 else: is_dup = False
                 alt_splitters = alt_seq + alt_clip
-                QR = int(split_weight * ref_seq) + int(disc_weight * ref_span)
-                QA = int(split_weight * alt_splitters) + int(disc_weight * alt_span)
+                QR = int(round(split_weight * ref_seq)) + int(round(disc_weight * ref_span))
+                QA = int(round(split_weight * alt_splitters)) + int(round(disc_weight * alt_span))
                 gt_lplist = bayes_gt(QR, QA, is_dup)
                 gt_idx = gt_lplist.index(max(gt_lplist))
 
@@ -1661,17 +1681,17 @@ def sv_genotype(bam_string,
 
                 # set the overall variant QUAL score and sample specific fields
                 var.genotype(sample.name).set_format('GL', ','.join(['%.0f' % x for x in gt_lplist]))
-                var.genotype(sample.name).set_format('DP', int(ref_seq + alt_seq + alt_clip + ref_span + alt_span))
-                var.genotype(sample.name).set_format('RO', int(ref_seq + ref_span))
-                var.genotype(sample.name).set_format('AO', int(alt_seq + alt_clip + alt_span))
+                var.genotype(sample.name).set_format('DP', int(round(ref_seq + alt_seq + alt_clip + ref_span + alt_span)))
+                var.genotype(sample.name).set_format('RO', int(round(ref_seq + ref_span)))
+                var.genotype(sample.name).set_format('AO', int(0.5 + alt_seq + alt_clip + alt_span))
                 var.genotype(sample.name).set_format('QR', QR)
                 var.genotype(sample.name).set_format('QA', QA)
                 # if detailed:
-                var.genotype(sample.name).set_format('RS', int(ref_seq))
-                var.genotype(sample.name).set_format('AS', int(alt_seq))
-                var.genotype(sample.name).set_format('ASC', int(alt_clip))
-                var.genotype(sample.name).set_format('RP', int(ref_span))
-                var.genotype(sample.name).set_format('AP', int(alt_span))
+                var.genotype(sample.name).set_format('RS', int(ref_seq + 0.5))
+                var.genotype(sample.name).set_format('AS', int(alt_seq + 0.5))
+                var.genotype(sample.name).set_format('ASC', int(alt_clip + 0.5))
+                var.genotype(sample.name).set_format('RP', int(ref_span + 0.5))
+                var.genotype(sample.name).set_format('AP', int(alt_span + 0.5))
                 try:
                     var.genotype(sample.name).set_format('AB', '%.2g' % (QA / float(QR + QA)))
                 except ZeroDivisionError:
@@ -1692,7 +1712,7 @@ def sv_genotype(bam_string,
                         phred_gq = 200
                     else:
                         phred_gq = abs(-10 * math.log(1 - (10**gt_lplist[gt_idx] / 10**gt_sum_log), 10))
-                    var.genotype(sample.name).set_format('GQ', int(phred_gq))
+                    var.genotype(sample.name).set_format('GQ', int(phred_gq + 0.5))
                     var.genotype(sample.name).set_format('SQ', sample_qual)
                     var.qual += sample_qual
                     if gt_idx == 1:
