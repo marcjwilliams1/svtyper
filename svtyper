@@ -842,8 +842,19 @@ class SamFragment(object):
             return False
 
         # ensure there is min_aligned on both sides of position
-        if read.get_overlap(max(0, pos - min_aligned), pos + min_aligned) < 2 * min_aligned:
+        # NOTE: changed this for nanopore to not require exact match around min-aligned
+        # instead of exact match, we require only `cutoff` percent matches. This will need to be tuned.
+        # we also split the single check into a left and right call since we don't want one side to have
+        # a preponderance of mismatches.
+        # And, it should only be use if, e.g. a --nanopore flag is set.
+        cutoff_pct = 0.925
+        
+        if read.get_overlap(max(0, pos - min_aligned), pos) < cutoff_pct * min_aligned:
             return False
+        if read.get_overlap(pos, pos + min_aligned) < cutoff_pct * min_aligned:
+            return False
+        #if read.get_overlap(max(0, pos - min_aligned), pos + min_aligned) < 0.9 * 2 * min_aligned:
+        #    return False
 
         return True
 
@@ -1533,7 +1544,6 @@ def sv_genotype(bam_string,
                     if (fragment.is_ref_seq(read, chromA, posA, ciA, min_aligned)
                         or fragment.is_ref_seq(read, chromB, posB, ciB, min_aligned)):
 
-
                         p_reference = prob_mapq(read)
                         ref_seq += p_reference
 
@@ -1542,17 +1552,20 @@ def sv_genotype(bam_string,
 
                 # get non-reference split-read support
                 for split in fragment.split_reads:
+                    # NOTE: we skip this if we've already used the read above because we dont want it to be
+                    # ref and alt support. This should check if read is a single-end before doing this.
+                    if write_fragment: break
 
                     split_lr = split.is_split_straddle(chromA, posA, ciA,
                                                        chromB, posB, ciB,
                                                        o1_is_reverse, o2_is_reverse,
                                                        svtype, split_slop)
                     if all(not s for s in split_lr):
-                        # with long reads (nanopore), we can get a read that spans the break
+                        # NOTE: with long reads (nanopore), we can get a read that spans the break
                         # with a deletion that supports the alternate scattered with a few spurious matches.
                         #bases_aligned = read.get_overlap(posA, posB)
                         bases_aligned = len(set(range(posA, posB)) - set(read.get_reference_positions()))
-                        if bases_aligned / float(posB - posA) > 0.95:
+                        if bases_aligned / float(posB - posA) > 0.55:
                             ref_seq += bases_aligned / float(posB - posA)
                             write_fragment = True
                         else:
