@@ -207,7 +207,12 @@ def sv_genotype(bam_string,
 
 
         v = line.rstrip().split('\t')
-        var = Variant(v, vcf)
+        try:
+            var = Variant(v, vcf)
+        except Exception as e:
+            sys.stderr.write(line + "\n")
+            raise e
+
         var_length = None # var_length should be None except for deletions
         if not sum_quals:
             var.qual = 0
