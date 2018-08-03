@@ -236,12 +236,12 @@ def sv_genotype(bam_string,
                 posA = var.pos
                 posB = var2.pos
                 # confidence intervals
-                ciA = map(int, var.info['CIPOS'].split(','))
-                ciB = map(int, var2.info['CIPOS'].split(','))
-                if ciA[1] - ciA[0] > 200:
+                if "CIPOS95" in var.info:
                     ciA = map(int, var.info['CIPOS95'].split(','))
-                if ciB[1] - ciB[0] > 200:
                     ciB = map(int, var2.info['CIPOS95'].split(','))
+                else:
+                    ciA = map(int, var.info['CIPOS'].split(','))
+                    ciB = map(int, var2.info['CIPOS'].split(','))
 
                 # infer the strands from the alt allele
                 if var.alt[-1] == '[' or var.alt[-1] == ']':
@@ -263,12 +263,12 @@ def sv_genotype(bam_string,
             posA = var.pos
             posB = int(var.get_info('END'))
             # confidence intervals
-            ciA = map(int, var.info['CIPOS'].split(','))
-            ciB = map(int, var.info['CIEND'].split(','))
-            if ciA[1] - ciA[0] > 200:
+            if "CIPOS95" in var.info:
                 ciA = map(int, var.info['CIPOS95'].split(','))
-            if ciB[1] - ciB[0] > 200:
                 ciB = map(int, var.info['CIEND95'].split(','))
+            else:
+                ciA = map(int, var.info['CIPOS'].split(','))
+                ciB = map(int, var.info['CIEND'].split(','))
             if svtype == 'DEL':
                 var_length = posB - posA
                 o1_is_reverse, o2_is_reverse =  False, True
