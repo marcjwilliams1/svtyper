@@ -521,8 +521,10 @@ class Library(object):
         for read in self.bam.fetch():
             if read.get_tag('RG') not in self.readgroups:
                 continue
-            if read.infer_query_length() > max_rl:
-                max_rl = read.infer_query_length()
+            rl = read.infer_query_length()
+            if rl is None: continue
+            if rl > max_rl:
+                max_rl = rl
             if counter == num_samp:
                 break
             counter += 1
