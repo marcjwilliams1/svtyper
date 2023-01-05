@@ -40,7 +40,7 @@ description: Compute genotype of structural variants based on breakpoint depth")
     parser.add_argument('--split_weight', metavar='FLOAT', type=float, required=False, default=1, help='weight for split reads [1]')
     parser.add_argument('--disc_weight', metavar='FLOAT', type=float, required=False, default=1, help='weight for discordant paired-end reads [1]')
     parser.add_argument('-w', '--write_alignment', metavar='FILE', dest='alignment_outpath', type=str, required=False, default=None, help='write relevant reads to BAM file')
-    parser.add_argument('--clip_read_support', action='store_false', help="Report counts when only clipped reads support a variant, default is that variants with only clipped read support are not genotyped")
+    parser.add_argument('--clip_read_support', action='store_true', help="Report counts when only clipped reads support a variant, default is that variants with only clipped read support are not genotyped")
     parser.add_argument('--debug', action='store_true', help=argparse.SUPPRESS)
     parser.add_argument('--verbose', action='store_true', default=False, help='Report status updates')
 
@@ -138,7 +138,6 @@ def sv_genotype(bam_string,
             exit(1)
             
     min_lib_prevalence = 1e-3 # only consider libraries that constitute at least this fraction of the BAM
-    print(clip_read_support)
     # parse lib_info_path JSON
     lib_info = None
     if lib_info_path is not None and os.path.isfile(lib_info_path):
