@@ -40,6 +40,7 @@ description: Compute genotype of structural variants based on breakpoint depth")
     parser.add_argument('--split_weight', metavar='FLOAT', type=float, required=False, default=1, help='weight for split reads [1]')
     parser.add_argument('--disc_weight', metavar='FLOAT', type=float, required=False, default=1, help='weight for discordant paired-end reads [1]')
     parser.add_argument('-w', '--write_alignment', metavar='FILE', dest='alignment_outpath', type=str, required=False, default=None, help='write relevant reads to BAM file')
+    parser.add_argument('--clip_read_support', action='store_false', help="Report counts when only clipped reads support a variant, default is that variants with only clipped read support are not genotyped")
     parser.add_argument('--debug', action='store_true', help=argparse.SUPPRESS)
     parser.add_argument('--verbose', action='store_true', default=False, help='Report status updates')
 
@@ -117,6 +118,7 @@ def sv_genotype(bam_string,
                 num_samp,
                 lib_info_path,
                 debug,
+                clip_read_support,
                 alignment_outpath,
                 ref_fasta,
                 sum_quals,
@@ -136,7 +138,7 @@ def sv_genotype(bam_string,
             exit(1)
             
     min_lib_prevalence = 1e-3 # only consider libraries that constitute at least this fraction of the BAM
-
+    print(clip_read_support)
     # parse lib_info_path JSON
     lib_info = None
     if lib_info_path is not None and os.path.isfile(lib_info_path):
@@ -349,8 +351,8 @@ def sv_genotype(bam_string,
                                                              min_aligned,
                                                              fragment.lib)
 
-                # check both sides if inversion (perhaps should do this for BND as well?)
-                if svtype in ('INV'):
+                # check both sides if inversion (perhaps should do this for BND as well? yes)
+                if svtype in ('INV', 'BND'):
                     alt_straddle_reciprocal = fragment.is_pair_straddle(chromA, posA, ciA,
                                                                         chromB, posB, ciB,
                                                                         not o1_is_reverse,
@@ -434,8 +436,8 @@ def sv_genotype(bam_string,
                 alt_span = 0
                 ref_span = 0
 
-            if alt_span + alt_seq == 0 and alt_clip > 0:
-                # discount any SV that's only supported by clips.
+            if alt_span + alt_seq == 0 and alt_clip > 0 and clip_read_support == False:
+                # discount any SV that's only supported by clips if clip_read_support == False
                 alt_clip = 0
 
             if ref_seq + alt_seq + ref_span + alt_span + alt_clip > 0:
@@ -444,8 +446,8 @@ def sv_genotype(bam_string,
                 else: is_dup = False
 
                 alt_splitters = alt_seq + alt_clip
-                QR = int(split_weight * ref_seq) + int(disc_weight * ref_span)
-                QA = int(split_weight * alt_splitters) + int(disc_weight * alt_span)
+                QR = int(round(split_weight * ref_seq)) + int(round(disc_weight * ref_span))
+                QA = int(round(split_weight * alt_splitters)) + int(round(disc_weight * alt_span))
                 gt_lplist = bayes_gt(QR, QA, is_dup)
                 best, second_best = sorted([ (i, e) for i, e in enumerate(gt_lplist) ], key=lambda x: x[1], reverse=True)[0:2]
                 gt_idx = best[0]
@@ -456,17 +458,17 @@ def sv_genotype(bam_string,
 
                 # set the overall variant QUAL score and sample specific fields
                 var.genotype(sample.name).set_format('GL', ','.join(['%.0f' % x for x in gt_lplist]))
-                var.genotype(sample.name).set_format('DP', int(ref_seq + alt_seq + alt_clip + ref_span + alt_span))
-                var.genotype(sample.name).set_format('RO', int(ref_seq + ref_span))
-                var.genotype(sample.name).set_format('AO', int(alt_seq + alt_clip + alt_span))
+                var.genotype(sample.name).set_format('DP', int(round(ref_seq + alt_seq + alt_clip + ref_span + alt_span)))
+                var.genotype(sample.name).set_format('RO', int(round(ref_seq + ref_span)))
+                var.genotype(sample.name).set_format('AO', int(round(alt_seq + alt_clip + alt_span)))
                 var.genotype(sample.name).set_format('QR', QR)
                 var.genotype(sample.name).set_format('QA', QA)
                 # if detailed:
-                var.genotype(sample.name).set_format('RS', int(ref_seq))
-                var.genotype(sample.name).set_format('AS', int(alt_seq))
-                var.genotype(sample.name).set_format('ASC', int(alt_clip))
-                var.genotype(sample.name).set_format('RP', int(ref_span))
-                var.genotype(sample.name).set_format('AP', int(alt_span))
+                var.genotype(sample.name).set_format('RS', int(round(ref_seq)))
+                var.genotype(sample.name).set_format('AS', int(round(alt_seq)))
+                var.genotype(sample.name).set_format('ASC', int(round(alt_clip)))
+                var.genotype(sample.name).set_format('RP', int(round(ref_span)))
+                var.genotype(sample.name).set_format('AP', int(round(alt_span)))
                 try:
                     var.genotype(sample.name).set_format('AB', '%.2g' % (QA / float(QR + QA)))
                 except ZeroDivisionError:
@@ -565,6 +567,7 @@ def main():
                 args.num_samp,
                 args.lib_info_path,
                 args.debug,
+                args.clip_read_support,
                 args.alignment_outpath,
                 args.ref_fasta,
                 args.sum_quals,
