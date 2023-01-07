@@ -442,9 +442,11 @@ def sv_genotype(bam_string,
                 alt_span = 0
                 ref_span = 0
 
-            if alt_span + alt_seq == 0 and alt_clip > 0 and clip_read_support == False:
+            if alt_span < 0.5 and alt_seq < 0.5 and alt_clip > 0 and clip_read_support == False:
                 # discount any SV that's only supported by clips if clip_read_support == False
                 alt_clip = 0
+
+            print('alt_clip:', alt_clip)
 
             if ref_seq + alt_seq + ref_span + alt_span + alt_clip > 0:
                 # get bayesian classifier
