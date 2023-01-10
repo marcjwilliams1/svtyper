@@ -40,9 +40,11 @@ description: Compute genotype of structural variants based on breakpoint depth")
     parser.add_argument('--split_weight', metavar='FLOAT', type=float, required=False, default=1, help='weight for split reads [1]')
     parser.add_argument('--disc_weight', metavar='FLOAT', type=float, required=False, default=1, help='weight for discordant paired-end reads [1]')
     parser.add_argument('-w', '--write_alignment', metavar='FILE', dest='alignment_outpath', type=str, required=False, default=None, help='write relevant reads to BAM file')
-    parser.add_argument('--clip_read_support', action='store_true', help="Report counts when only clipped reads support a variant, default is that variants with only clipped read support are not genotyped")
+    parser.add_argument('--clip_read_support', action='store_true', default = False, help="Report counts when only clipped reads support a variant, default is that variants with only clipped read support are not genotyped")
     parser.add_argument('--debug', action='store_true', help=argparse.SUPPRESS)
     parser.add_argument('--verbose', action='store_true', default=False, help='Report status updates')
+    parser.add_argument('--keep_duplicates', action='store_true', default=False, help='Keep duplicates for read counting (default: True)')
+
 
     # parse the arguments
     args = parser.parse_args()
@@ -56,14 +58,14 @@ description: Compute genotype of structural variants based on breakpoint depth")
     return args
 
 # methods to grab reads from region of interest in BAM file
-def gather_all_reads(sample, chromA, posA, ciA, chromB, posB, ciB, z, max_reads):
+def gather_all_reads(sample, chromA, posA, ciA, chromB, posB, ciB, z, max_reads, keep_duplicates):
     # grab batch of reads from both sides of breakpoint
     read_batch = {}
-    read_batch, many = gather_reads(sample, chromA, posA, ciA, z, read_batch, max_reads)
+    read_batch, many = gather_reads(sample, chromA, posA, ciA, z, read_batch, max_reads, keep_duplicates)
     if many:
         return {}, True
 
-    read_batch, many = gather_reads(sample, chromB, posB, ciB, z, read_batch, max_reads)
+    read_batch, many = gather_reads(sample, chromB, posB, ciB, z, read_batch, max_reads, keep_duplicates)
     if many:
         return {}, True
 
@@ -73,7 +75,8 @@ def gather_reads(sample,
                  chrom, pos, ci,
                  z,
                  fragment_dict,
-                 max_reads):
+                 max_reads,
+                 keep_duplicates):
 
     # the distance to the left and right of the breakpoint to scan
     # (max of mean + z standard devs over all of a sample's libraries)
@@ -84,7 +87,10 @@ def gather_reads(sample,
     for i, read in enumerate(sample.bam.fetch(chrom,
                                  max(pos + ci[0] - fetch_flank, 0),
                                  min(pos + ci[1] + fetch_flank, chrom_length))):
-        if read.is_unmapped or read.is_duplicate:
+        if read.is_unmapped:
+            continue
+
+        if read.is_duplicate and keep_duplicates == False:
             continue
 
         lib = sample.get_lib(read.get_tag('RG'))
@@ -119,6 +125,7 @@ def sv_genotype(bam_string,
                 lib_info_path,
                 debug,
                 clip_read_support,
+                keep_duplicates,
                 alignment_outpath,
                 ref_fasta,
                 sum_quals,
@@ -136,7 +143,7 @@ def sv_genotype(bam_string,
         else:
             sys.stderr.write('Error: %s is not a valid alignment file (*.bam or *.cram)\n' % b)
             exit(1)
-            
+
     min_lib_prevalence = 1e-3 # only consider libraries that constitute at least this fraction of the BAM
     # parse lib_info_path JSON
     lib_info = None
@@ -283,7 +290,7 @@ def sv_genotype(bam_string,
 
         for sample in sample_list:
             # grab reads from both sides of breakpoint
-            read_batch, many = gather_all_reads(sample, chromA, posA, ciA, chromB, posB, ciB, z, max_reads)
+            read_batch, many = gather_all_reads(sample, chromA, posA, ciA, chromB, posB, ciB, z, max_reads, keep_duplicates)
             if many:
                 var.genotype(sample.name).set_format('GT', './.')
                 continue
@@ -435,7 +442,7 @@ def sv_genotype(bam_string,
                 alt_span = 0
                 ref_span = 0
 
-            if alt_span + alt_seq == 0 and alt_clip > 0 and clip_read_support == False:
+            if alt_span < 0.5 and alt_seq < 0.5 and alt_clip > 0 and clip_read_support == False:
                 # discount any SV that's only supported by clips if clip_read_support == False
                 alt_clip = 0
 
@@ -567,6 +574,7 @@ def main():
                 args.lib_info_path,
                 args.debug,
                 args.clip_read_support,
+                args.keep_duplicates,
                 args.alignment_outpath,
                 args.ref_fasta,
                 args.sum_quals,

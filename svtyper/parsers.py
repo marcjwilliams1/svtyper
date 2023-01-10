@@ -1190,7 +1190,8 @@ class SplitRead(object):
                     pos_left,
                     is_reverse_left,
                     split_slop)
-        elif svtype == 'INV':
+        #elif svtype == 'INV':
+        elif svtype in ('INV', 'BND'):
                 # check all possible sides
             left_split_left = self.check_split_support(self.query_left,
                     chrom_left,
