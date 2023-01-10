@@ -446,8 +446,6 @@ def sv_genotype(bam_string,
                 # discount any SV that's only supported by clips if clip_read_support == False
                 alt_clip = 0
 
-            print('alt_clip:', alt_clip)
-
             if ref_seq + alt_seq + ref_span + alt_span + alt_clip > 0:
                 # get bayesian classifier
                 if var.info['SVTYPE'] == "DUP": is_dup = True
