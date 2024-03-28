@@ -1168,7 +1168,7 @@ class SplitRead(object):
         left_split = False
         right_split = False
 
-        if (not self.is_soft_clip) or svtype == 'DEL' or svtype == 'INS':
+        if svtype == 'DEL' or svtype == 'INS':
             left_split = self.check_split_support(self.query_left,
                     chrom_left,
                     pos_left,
