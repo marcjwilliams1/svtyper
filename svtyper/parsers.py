@@ -1168,7 +1168,7 @@ class SplitRead(object):
         left_split = False
         right_split = False
 
-        if svtype == 'DEL' or svtype == 'INS':
+        if svtype == 'DEL' or svtype == 'INS' or svtype == 'DUP':
             left_split = self.check_split_support(self.query_left,
                     chrom_left,
                     pos_left,
@@ -1179,18 +1179,6 @@ class SplitRead(object):
                     pos_right,
                     is_reverse_right,
                     split_slop)
-        elif svtype == 'DUP':
-            left_split = self.check_split_support(self.query_left,
-                    chrom_right,
-                    pos_right,
-                    is_reverse_right,
-                    split_slop)
-            right_split = self.check_split_support(self.query_right,
-                    chrom_left,
-                    pos_left,
-                    is_reverse_left,
-                    split_slop)
-        #elif svtype == 'INV':
         elif svtype in ('INV', 'BND'):
                 # check all possible sides
             left_split_left = self.check_split_support(self.query_left,
