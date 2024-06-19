@@ -41,9 +41,11 @@ description: Compute genotype of structural variants based on breakpoint depth")
     parser.add_argument('--disc_weight', metavar='FLOAT', type=float, required=False, default=1, help='weight for discordant paired-end reads [1]')
     parser.add_argument('-w', '--write_alignment', metavar='FILE', dest='alignment_outpath', type=str, required=False, default=None, help='write relevant reads to BAM file')
     parser.add_argument('--clip_read_support', action='store_true', default = False, help="Report counts when only clipped reads support a variant, default is that variants with only clipped read support are not genotyped")
+    parser.add_argument('--read_names_vcf', action='store_true', default = False, help="Output readnames supporting an SV to vcf, default is FALSE")
     parser.add_argument('--debug', action='store_true', help=argparse.SUPPRESS)
     parser.add_argument('--verbose', action='store_true', default=False, help='Report status updates')
     parser.add_argument('--keep_duplicates', action='store_true', default=False, help='Keep duplicates for read counting (default: True)')
+    parser.add_argument('--not_fractional', action='store_true', default=False, help='Include this to suppress fractional counting')
 
 
     # parse the arguments
@@ -130,7 +132,9 @@ def sv_genotype(bam_string,
                 ref_fasta,
                 sum_quals,
                 max_reads,
-                max_ci_dist):
+                max_ci_dist,
+                read_names_vcf,
+                not_fractional):
 
     # parse the comma separated inputs
     bam_list = []
@@ -299,6 +303,12 @@ def sv_genotype(bam_string,
             ref_span, alt_span = 0, 0
             ref_seq, alt_seq = 0, 0
             alt_clip = 0
+            n_ref_span, n_alt_span = 0, 0
+            n_ref_seq, n_alt_seq = 0, 0
+            n_alt_clip = 0
+            read_names_split = []
+            read_names_clip = []
+            read_names_span = []
 
             # ref_ciA = ciA
             # ref_ciB = ciB
@@ -321,6 +331,7 @@ def sv_genotype(bam_string,
                     if (is_ref_seq_A or is_ref_seq_B):
                         p_reference = prob_mapq(read)
                         ref_seq += p_reference
+                        n_ref_seq += math.ceil(p_reference)
 
                         read.set_tag('XV', 'R')
                         write_fragment = True
@@ -336,8 +347,14 @@ def sv_genotype(bam_string,
                     p_alt = (prob_mapq(split.query_left) * split_lr[0] + prob_mapq(split.query_right) * split_lr[1]) / 2.0
                     if split.is_soft_clip:
                         alt_clip += p_alt
+                        n_alt_clip += math.ceil(p_alt)
+                        if p_alt > 0:
+                            read_names_clip.append(split.query_name)
                     else:
                         alt_seq += p_alt
+                        n_alt_seq += math.ceil(p_alt)
+                        if p_alt > 0:
+                            read_names_split.append(split.query_name)
 
                     if p_alt > 0:
                         split.tag_split(p_alt)
@@ -374,6 +391,7 @@ def sv_genotype(bam_string,
                         if p_conc is not None:
                             p_alt = (1 - p_conc) * prob_mapq(fragment.readA) * prob_mapq(fragment.readB)
                             alt_span += p_alt
+                            n_alt_span += math.ceil(p_alt)
 
                             # # since an alt straddler is by definition also a reference straddler,
                             # # we can bail out early here to save some time
@@ -384,12 +402,19 @@ def sv_genotype(bam_string,
                             fragment.tag_span(p_alt)
                             write_fragment = True
 
+                            if p_alt > 0:
+                                read_names_span.append(query_name)
+
                     else:
                         p_alt = prob_mapq(fragment.readA) * prob_mapq(fragment.readB)
                         alt_span += p_alt
+                        n_alt_span += math.ceil(p_alt)
 
                         fragment.tag_span(p_alt)
                         write_fragment = True
+
+                        if p_alt > 0:
+                            read_names_span.append(query_name)
 
                 # # tally spanning reference pairs
                 if svtype == 'DEL' and posB - posA < 2 * fragment.lib.sd:
@@ -415,6 +440,7 @@ def sv_genotype(bam_string,
                         if p_conc is not None:
                             p_reference = p_conc * prob_mapq(fragment.readA) * prob_mapq(fragment.readB)
                             ref_span += (ref_straddle_A + ref_straddle_B) * p_reference / 2
+                            n_ref_span += math.ceil((ref_straddle_A + ref_straddle_B) * p_reference / 2)
 
                             fragment.tag_span(1 - p_conc)
                             write_fragment = True
@@ -431,6 +457,11 @@ def sv_genotype(bam_string,
                 print('ref_seq:', ref_seq)
                 print('alt_seq:', alt_seq)
                 print('alt_clip:', alt_clip)
+                print('n_ref_span:', n_ref_span)
+                print('n_alt_span:', n_alt_span)
+                print('n_ref_seq:', n_ref_seq)
+                print('n_alt_seq:', n_alt_seq)
+                print('n_alt_clip:', n_alt_clip)
 
             # in the absence of evidence for a particular type, ignore the reference
             # support for that type as well
@@ -445,7 +476,12 @@ def sv_genotype(bam_string,
             if alt_span < 0.5 and alt_seq < 0.5 and alt_clip > 0 and clip_read_support == False:
                 # discount any SV that's only supported by clips if clip_read_support == False
                 alt_clip = 0
-
+            
+            if not_fractional == True:
+                alt_clip = n_alt_clip
+                alt_span = n_alt_span
+                alt_seq = n_alt_seq
+            
             if ref_seq + alt_seq + ref_span + alt_span + alt_clip > 0:
                 # get bayesian classifier
                 if var.info['SVTYPE'] == "DUP": is_dup = True
@@ -475,6 +511,10 @@ def sv_genotype(bam_string,
                 var.genotype(sample.name).set_format('ASC', int(round(alt_clip)))
                 var.genotype(sample.name).set_format('RP', int(round(ref_span)))
                 var.genotype(sample.name).set_format('AP', int(round(alt_span)))
+                if read_names_vcf == True:
+                    var.genotype(sample.name).set_format('RNAS', ','.join(set(read_names_split)))
+                    var.genotype(sample.name).set_format('RNASC', ','.join(set(read_names_clip)))
+                    var.genotype(sample.name).set_format('RNAP', ','.join(set(read_names_span)))
                 try:
                     var.genotype(sample.name).set_format('AB', '%.2g' % (QA / float(QR + QA)))
                 except ZeroDivisionError:
@@ -523,6 +563,10 @@ def sv_genotype(bam_string,
                 var.genotype(sample.name).set_format('QR', 0)
                 var.genotype(sample.name).set_format('QA', 0)
                 var.genotype(sample.name).set_format('AB', '.')
+                if read_names_vcf == True:
+                    var.genotype(sample.name).set_format('RNAS', '.')
+                    var.genotype(sample.name).set_format('RNASC', '.')
+                    var.genotype(sample.name).set_format('RNAP', '.')
 
         # after all samples have been processed, write
         vcf_out.write(var.get_var_string() + '\n')
@@ -579,7 +623,9 @@ def main():
                 args.ref_fasta,
                 args.sum_quals,
                 args.max_reads,
-                args.max_ci_dist)
+                args.max_ci_dist,
+                args.read_names_vcf,
+                args.not_fractional)
 
 # --------------------------------------
 # command-line/console entrypoint
