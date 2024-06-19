@@ -775,7 +775,7 @@ class SamFragment(object):
         if p_alt is None:
             value = 'U'
         elif p_alt > 0:
-            value = 'A'
+            value = 'ASPAN'
         else:
             value = 'R'
         for read in self.primary_reads:
@@ -1211,7 +1211,7 @@ class SplitRead(object):
         if p_alt is None:
             value = 'U'
         elif p_alt > 0:
-            value = 'A'
+            value = 'ASPLIT'
         else:
             value = 'R'
 
