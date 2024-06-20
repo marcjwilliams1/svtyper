@@ -1,3 +1,3 @@
 __author__ = "Colby Chiang (colbychiang@wustl.edu)"
 __author__ = "Marc J. Williams"
-__version__ = "v0.7.5"
+__version__ = "v0.7.6"
