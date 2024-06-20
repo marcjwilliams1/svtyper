@@ -401,12 +401,12 @@ def sv_genotype(bam_string,
                             alt_span += p_alt
 
                             if p_alt > 0.5 and not_fractional == True:
-                                read_names_span.append(split.query_name)
+                                read_names_span.append(query_name)
                                 n_alt_span += math.ceil(p_alt)
                                 fragment.tag_span(p_alt)
                                 write_fragment = True
                             elif p_alt > 0.0 and not_fractional == False:
-                                read_names_span.append(split.query_name)
+                                read_names_span.append(query_name)
                                 n_alt_span += math.ceil(p_alt)
                                 fragment.tag_span(p_alt)
                                 write_fragment = True
@@ -424,12 +424,12 @@ def sv_genotype(bam_string,
                         alt_span += p_alt
 
                         if p_alt > 0.5 and not_fractional == True:
-                            read_names_span.append(split.query_name)
+                            read_names_span.append(query_name)
                             n_alt_span += math.ceil(p_alt)
                             fragment.tag_span(p_alt)
                             write_fragment = True
                         elif p_alt > 0.0 and not_fractional == False:
-                            read_names_span.append(split.query_name)
+                            read_names_span.append(query_name)
                             n_alt_span += math.ceil(p_alt)
                             fragment.tag_span(p_alt)
                             write_fragment = True
