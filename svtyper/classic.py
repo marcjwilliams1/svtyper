@@ -41,7 +41,8 @@ description: Compute genotype of structural variants based on breakpoint depth")
     parser.add_argument('--disc_weight', metavar='FLOAT', type=float, required=False, default=1, help='weight for discordant paired-end reads [1]')
     parser.add_argument('-w', '--write_alignment', metavar='FILE', dest='alignment_outpath', type=str, required=False, default=None, help='write relevant reads to BAM file')
     parser.add_argument('--clip_read_support', action='store_true', default = False, help="Report counts when only clipped reads support a variant, default is that variants with only clipped read support are not genotyped")
-    parser.add_argument('--read_names_vcf', action='store_true', default = False, help="Output readnames supporting an SV to vcf, default is FALSE")
+    parser.add_argument('--read_names_out', action='store_true', default=False, 
+                       help='Output supporting read names to a separate file (default: False)')
     parser.add_argument('--debug', action='store_true', help=argparse.SUPPRESS)
     parser.add_argument('--verbose', action='store_true', default=False, help='Report status updates')
     parser.add_argument('--keep_duplicates', action='store_true', default=False, help='Keep duplicates for read counting (default: True)')
@@ -133,7 +134,7 @@ def sv_genotype(bam_string,
                 sum_quals,
                 max_reads,
                 max_ci_dist,
-                read_names_vcf,
+                read_names_out,
                 both_sides):
 
     # parse the comma separated inputs
@@ -202,6 +203,13 @@ def sv_genotype(bam_string,
     header = []
     breakend_dict = {} # cache to hold unmatched generic breakends for genotyping
     vcf = Vcf()
+
+    # Add new parameter for read names output file
+    read_names_file = None
+    if read_names_out:
+        out_base = os.path.splitext(vcf_out.name)[0] if vcf_out.name != '<stdout>' else 'sv_genotypes'
+        read_names_file = open(f"{out_base}.readnames", "w")
+        read_names_file.write("sv_id,sample,split_reads,span_reads,clip_reads\n")
 
     # read input VCF
     for line in vcf_in:
@@ -526,10 +534,12 @@ def sv_genotype(bam_string,
                 var.genotype(sample.name).set_format('ASC', int(round(alt_clip)))
                 var.genotype(sample.name).set_format('RP', int(round(ref_span)))
                 var.genotype(sample.name).set_format('AP', int(round(alt_span)))
-                if read_names_vcf == True:
-                    var.genotype(sample.name).set_format('RNAS', ','.join(set(read_names_split)))
-                    var.genotype(sample.name).set_format('RNASC', ','.join(set(read_names_clip)))
-                    var.genotype(sample.name).set_format('RNAP', ','.join(set(read_names_span)))
+                if read_names_out:
+                    split_str = '|'.join(set(read_names_split)) if read_names_split else '.'
+                    span_str = '|'.join(set(read_names_span)) if read_names_span else '.'
+                    clip_str = '|'.join(set(read_names_clip)) if read_names_clip else '.'
+                    
+                    read_names_file.write(f"{var.var_id},{sample.name},{split_str},{span_str},{clip_str}\n")
                 try:
                     var.genotype(sample.name).set_format('AB', '%.2g' % (QA / float(QR + QA)))
                 except ZeroDivisionError:
@@ -578,10 +588,6 @@ def sv_genotype(bam_string,
                 var.genotype(sample.name).set_format('QR', 0)
                 var.genotype(sample.name).set_format('QA', 0)
                 var.genotype(sample.name).set_format('AB', '.')
-                if read_names_vcf == True:
-                    var.genotype(sample.name).set_format('RNAS', '.')
-                    var.genotype(sample.name).set_format('RNASC', '.')
-                    var.genotype(sample.name).set_format('RNAP', '.')
 
         # after all samples have been processed, write
         vcf_out.write(var.get_var_string() + '\n')
@@ -600,6 +606,10 @@ def sv_genotype(bam_string,
     vcf_out.close()
     if alignment_outpath is not None:
         out_bam.close()
+
+    # Close files at the end
+    if read_names_out and read_names_file:
+        read_names_file.close()
 
     return
 
@@ -639,7 +649,7 @@ def main():
                 args.sum_quals,
                 args.max_reads,
                 args.max_ci_dist,
-                args.read_names_vcf,
+                args.read_names_out,
                 args.both_sides)
 
 # --------------------------------------

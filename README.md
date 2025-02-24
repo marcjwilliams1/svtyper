@@ -37,6 +37,7 @@ svtyper \
     -i sv.vcf \
     -B sample.bam \
     -l sample.bam.json \
+    --read_names_out \
     > sv.gt.vcf
 ```
 
@@ -63,10 +64,28 @@ with open(input_vcf, "r") as inf, open(output_vcf, "w") as outf:
                     alignment_outpath=None,
                     ref_fasta=None,
                     sum_quals=False,
-                    max_reads=None)
+                    max_reads=None,
+                    read_names_out=True,
+                    both_sides=False)
 
 # Results will be inside the /path/to/output.vcf file
 ```
+
+### New Features
+
+- **Python version** works with python 3+, originally forked from https://github.com/brentp/svtyper
+
+- **Read counting** Counts are the number of reads supporting an SV, not rounded mapq values. This change was made so that counts could be outputted for single cell data were typically only 1 read may support an SV. Original implementation of SVtyper output rounded mapq values, so if there was 1 read with SV support it would be rounded to 0.
+
+- **Read Names Output**: Using the `--read_names_out` flag will create a companion file (*.readnames) containing the names of reads supporting each structural variant. The output format is:
+  ```
+  sv_id,sample,split_reads,span_reads,clip_reads
+  SV1,SAMPLE1,read1,read2,read3
+  ```
+
+- **Duplicates** The `--keep_duplicates` flag will keep duplicates for read counting (default: False).
+
+- **Both Sides Option**: The `--both_sides` flag requires reads to align to both sides of a breakpoint to be counted as support.
 
 ### `svtyper-sso`
 

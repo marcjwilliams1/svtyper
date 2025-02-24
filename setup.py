@@ -16,8 +16,10 @@ setup(
     long_description_content_type='text/markdown',
     author=__author__,
     author_email='colbychiang@wustl.edu',
+    author=__author__,
+    author_email='marcjwilliams1@gmail.com',
     license='MIT License',
-    url='https://github.com/hall-lab/svtyper',
+    url='https://github.com/marcjwilliams1/svtyper',
     setup_requires=['pytest-runner'],
     tests_require=['pytest==4.6.4'],
     install_requires=[
@@ -46,7 +48,7 @@ setup(
         'Intended Audience :: Science/Research',
         'Topic :: Scientific/Engineering :: Bio-Informatics',
         'License :: OSI Approved :: MIT License',
-        'Programming Language :: Python :: 2.7',
+        'Programming Language :: Python :: 3.5',
     ],
 )
 

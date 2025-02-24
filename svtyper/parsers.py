@@ -46,9 +46,6 @@ class Vcf(object):
         self.add_format('RP', 1, 'Integer', 'Reference allele paired-end observation count, with partial observations recorded fractionally')
         self.add_format('AP', 'A', 'Integer', 'Alternate allele paired-end observation count, with partial observations recorded fractionally')
         self.add_format('AB', 'A', 'Float', 'Allele balance, fraction of observations from alternate allele, QA/(QR+QA)')
-        self.add_format('RNAS', 'A', 'String', 'Read names of split reads supporting SV')
-        self.add_format('RNASC', 'A', 'String', 'Read names of clipped reads supporting SV')
-        self.add_format('RNAP', 'A', 'String', 'Read names of discordant reads supporting SV')
 
     def add_header(self, header):
         for line in header:
