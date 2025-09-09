@@ -20,6 +20,31 @@ except NameError:
 # --------------------------------------
 # define functions
 
+def load_cell_filter(cell_filter_file):
+    """Load allowed cell IDs from file, one per line"""
+    if cell_filter_file is None:
+        return None
+    
+    allowed_cells = set()
+    try:
+        with open(cell_filter_file, 'r') as f:
+            for line in f:
+                cell_id = line.strip()
+                if cell_id:  # Skip empty lines
+                    allowed_cells.add(cell_id)
+    except IOError as e:
+        sys.stderr.write('Error reading cell filter file %s: %s\n' % (cell_filter_file, str(e)))
+        exit(1)
+    
+    return allowed_cells
+
+def get_cell_id(read):
+    """Extract cell ID from CB tag, return 'UNKNOWN' if not present"""
+    try:
+        return read.get_tag('CB')
+    except KeyError:
+        return "UNKNOWN"
+
 def get_args():
     parser = argparse.ArgumentParser(formatter_class=RawTextHelpFormatter, description="\
 svtyper\n\
@@ -43,6 +68,10 @@ description: Compute genotype of structural variants based on breakpoint depth")
     parser.add_argument('--clip_read_support', action='store_true', default = False, help="Report counts when only clipped reads support a variant, default is that variants with only clipped read support are not genotyped")
     parser.add_argument('--read_names_out', action='store_true', default=False, 
                        help='Output supporting read names to a separate file (default: False)')
+    parser.add_argument('--output_cell_ids', action='store_true', default=False,
+                       help='Output cell IDs from CB tags alongside read names (requires --read_names_out)')
+    parser.add_argument('--cell_filter_file', metavar='FILE', type=str, required=False, default=None,
+                       help='File containing allowed cell IDs, one per line (filters reads by CB tag)')
     parser.add_argument('--debug', action='store_true', help=argparse.SUPPRESS)
     parser.add_argument('--verbose', action='store_true', default=False, help='Report status updates')
     parser.add_argument('--keep_duplicates', action='store_true', default=False, help='Keep duplicates for read counting (default: True)')
@@ -61,14 +90,14 @@ description: Compute genotype of structural variants based on breakpoint depth")
     return args
 
 # methods to grab reads from region of interest in BAM file
-def gather_all_reads(sample, chromA, posA, ciA, chromB, posB, ciB, z, max_reads, keep_duplicates):
+def gather_all_reads(sample, chromA, posA, ciA, chromB, posB, ciB, z, max_reads, keep_duplicates, allowed_cells=None):
     # grab batch of reads from both sides of breakpoint
     read_batch = {}
-    read_batch, many = gather_reads(sample, chromA, posA, ciA, z, read_batch, max_reads, keep_duplicates)
+    read_batch, many = gather_reads(sample, chromA, posA, ciA, z, read_batch, max_reads, keep_duplicates, allowed_cells)
     if many:
         return {}, True
 
-    read_batch, many = gather_reads(sample, chromB, posB, ciB, z, read_batch, max_reads, keep_duplicates)
+    read_batch, many = gather_reads(sample, chromB, posB, ciB, z, read_batch, max_reads, keep_duplicates, allowed_cells)
     if many:
         return {}, True
 
@@ -79,7 +108,8 @@ def gather_reads(sample,
                  z,
                  fragment_dict,
                  max_reads,
-                 keep_duplicates):
+                 keep_duplicates,
+                 allowed_cells=None):
 
     # the distance to the left and right of the breakpoint to scan
     # (max of mean + z standard devs over all of a sample's libraries)
@@ -95,6 +125,12 @@ def gather_reads(sample,
 
         if read.is_duplicate and keep_duplicates == False:
             continue
+
+        # Filter by cell ID if cell filter is provided
+        if allowed_cells is not None:
+            cell_id = get_cell_id(read)
+            if cell_id not in allowed_cells:
+                continue
 
         lib = sample.get_lib(read.get_tag('RG'))
         if lib.name not in sample.active_libs:
@@ -135,7 +171,14 @@ def sv_genotype(bam_string,
                 max_reads,
                 max_ci_dist,
                 read_names_out,
-                both_sides):
+                both_sides,
+                output_cell_ids=False,
+                cell_filter_file=None):
+
+    # Load cell filter if provided
+    allowed_cells = load_cell_filter(cell_filter_file)
+    if allowed_cells is not None:
+        sys.stderr.write('Loaded %d allowed cell IDs from %s\n' % (len(allowed_cells), cell_filter_file))
 
     # parse the comma separated inputs
     bam_list = []
@@ -209,7 +252,10 @@ def sv_genotype(bam_string,
     if read_names_out:
         out_base = os.path.splitext(vcf_out.name)[0] if vcf_out.name != '<stdout>' else 'sv_genotypes'
         read_names_file = open(f"{out_base}.readnames", "w")
-        read_names_file.write("sv_id,sample,split_reads,span_reads,clip_reads\n")
+        if output_cell_ids:
+            read_names_file.write("sv_id,sample,split_reads,span_reads,clip_reads,split_cells,span_cells,clip_cells\n")
+        else:
+            read_names_file.write("sv_id,sample,split_reads,span_reads,clip_reads\n")
 
     # read input VCF
     for line in vcf_in:
@@ -302,7 +348,7 @@ def sv_genotype(bam_string,
 
         for sample in sample_list:
             # grab reads from both sides of breakpoint
-            read_batch, many = gather_all_reads(sample, chromA, posA, ciA, chromB, posB, ciB, z, max_reads, keep_duplicates)
+            read_batch, many = gather_all_reads(sample, chromA, posA, ciA, chromB, posB, ciB, z, max_reads, keep_duplicates, allowed_cells)
             if many:
                 var.genotype(sample.name).set_format('GT', './.')
                 continue
@@ -317,6 +363,9 @@ def sv_genotype(bam_string,
             read_names_split = []
             read_names_clip = []
             read_names_span = []
+            cell_ids_split = []
+            cell_ids_clip = []
+            cell_ids_span = []
 
             # ref_ciA = ciA
             # ref_ciB = ciB
@@ -358,21 +407,29 @@ def sv_genotype(bam_string,
                         if p_alt > 0.5 and both_sides == True:
                             n_alt_clip += math.ceil(p_alt)
                             read_names_clip.append(split.query_name)
+                            if output_cell_ids:
+                                cell_ids_clip.append(get_cell_id(split.read))
                             split.tag_split(p_alt)
                             write_fragment = True
                         elif p_alt > 0 and both_sides == False:
                             read_names_clip.append(split.query_name)
+                            if output_cell_ids:
+                                cell_ids_clip.append(get_cell_id(split.read))
                             split.tag_split(p_alt)
                             write_fragment = True
                     else:
                         alt_seq += p_alt
                         if p_alt > 0.5 and both_sides == True:
                             read_names_split.append(split.query_name)
+                            if output_cell_ids:
+                                cell_ids_split.append(get_cell_id(split.read))
                             n_alt_seq += math.ceil(p_alt)
                             split.tag_split(p_alt)
                             write_fragment = True
                         elif p_alt > 0.0 and both_sides == False:
                             read_names_split.append(split.query_name)
+                            if output_cell_ids:
+                                cell_ids_split.append(get_cell_id(split.read))
                             split.tag_split(p_alt)
                             write_fragment = True
 
@@ -410,11 +467,15 @@ def sv_genotype(bam_string,
 
                             if p_alt > 0.5 and both_sides == True:
                                 read_names_span.append(query_name)
+                                if output_cell_ids:
+                                    cell_ids_span.append(get_cell_id(fragment.readA))
                                 n_alt_span += math.ceil(p_alt)
                                 fragment.tag_span(p_alt)
                                 write_fragment = True
                             elif p_alt > 0.0 and both_sides == False:
                                 read_names_span.append(query_name)
+                                if output_cell_ids:
+                                    cell_ids_span.append(get_cell_id(fragment.readA))
                                 n_alt_span += math.ceil(p_alt)
                                 fragment.tag_span(p_alt)
                                 write_fragment = True
@@ -433,11 +494,15 @@ def sv_genotype(bam_string,
 
                         if p_alt > 0.5 and both_sides == True:
                             read_names_span.append(query_name)
+                            if output_cell_ids:
+                                cell_ids_span.append(get_cell_id(fragment.readA))
                             n_alt_span += math.ceil(p_alt)
                             fragment.tag_span(p_alt)
                             write_fragment = True
                         elif p_alt > 0.0 and both_sides == False:
                             read_names_span.append(query_name)
+                            if output_cell_ids:
+                                cell_ids_span.append(get_cell_id(fragment.readA))
                             n_alt_span += math.ceil(p_alt)
                             fragment.tag_span(p_alt)
                             write_fragment = True
@@ -539,7 +604,14 @@ def sv_genotype(bam_string,
                     span_str = '|'.join(set(read_names_span)) if read_names_span else '.'
                     clip_str = '|'.join(set(read_names_clip)) if read_names_clip else '.'
                     
-                    read_names_file.write(f"{var.var_id},{sample.name},{split_str},{span_str},{clip_str}\n")
+                    if output_cell_ids:
+                        split_cells_str = '|'.join(cell_ids_split) if cell_ids_split else '.'
+                        span_cells_str = '|'.join(cell_ids_span) if cell_ids_span else '.'
+                        clip_cells_str = '|'.join(cell_ids_clip) if cell_ids_clip else '.'
+                        
+                        read_names_file.write(f"{var.var_id},{sample.name},{split_str},{span_str},{clip_str},{split_cells_str},{span_cells_str},{clip_cells_str}\n")
+                    else:
+                        read_names_file.write(f"{var.var_id},{sample.name},{split_str},{span_str},{clip_str}\n")
                 try:
                     var.genotype(sample.name).set_format('AB', '%.2g' % (QA / float(QR + QA)))
                 except ZeroDivisionError:
@@ -650,7 +722,9 @@ def main():
                 args.max_reads,
                 args.max_ci_dist,
                 args.read_names_out,
-                args.both_sides)
+                args.both_sides,
+                args.output_cell_ids,
+                args.cell_filter_file)
 
 # --------------------------------------
 # command-line/console entrypoint
