@@ -253,9 +253,9 @@ def sv_genotype(bam_string,
         out_base = os.path.splitext(vcf_out.name)[0] if vcf_out.name != '<stdout>' else 'sv_genotypes'
         read_names_file = open(f"{out_base}.readnames", "w")
         if output_cell_ids:
-            read_names_file.write("sv_id,sample,split_reads,span_reads,clip_reads,split_cells,span_cells,clip_cells\n")
+            read_names_file.write("sv_id,sample,split_reads,span_reads,clip_reads,split_reads_count,span_reads_count,clip_reads_count,split_cells,span_cells,clip_cells,split_cells_count,span_cells_count,clip_cells_count\n")
         else:
-            read_names_file.write("sv_id,sample,split_reads,span_reads,clip_reads\n")
+            read_names_file.write("sv_id,sample,split_reads,span_reads,clip_reads,split_reads_count,span_reads_count,clip_reads_count\n")
 
     # read input VCF
     for line in vcf_in:
@@ -604,14 +604,24 @@ def sv_genotype(bam_string,
                     span_str = '|'.join(set(read_names_span)) if read_names_span else '.'
                     clip_str = '|'.join(set(read_names_clip)) if read_names_clip else '.'
                     
+                    # Calculate unique read counts
+                    split_count = len(set(read_names_split)) if read_names_split else 0
+                    span_count = len(set(read_names_span)) if read_names_span else 0
+                    clip_count = len(set(read_names_clip)) if read_names_clip else 0
+                    
                     if output_cell_ids:
                         split_cells_str = '|'.join(cell_ids_split) if cell_ids_split else '.'
                         span_cells_str = '|'.join(cell_ids_span) if cell_ids_span else '.'
                         clip_cells_str = '|'.join(cell_ids_clip) if cell_ids_clip else '.'
                         
-                        read_names_file.write(f"{var.var_id},{sample.name},{split_str},{span_str},{clip_str},{split_cells_str},{span_cells_str},{clip_cells_str}\n")
+                        # Calculate unique cell counts
+                        split_cells_count = len(set(cell_ids_split)) if cell_ids_split else 0
+                        span_cells_count = len(set(cell_ids_span)) if cell_ids_span else 0
+                        clip_cells_count = len(set(cell_ids_clip)) if cell_ids_clip else 0
+                        
+                        read_names_file.write(f"{var.var_id},{sample.name},{split_str},{span_str},{clip_str},{split_count},{span_count},{clip_count},{split_cells_str},{span_cells_str},{clip_cells_str},{split_cells_count},{span_cells_count},{clip_cells_count}\n")
                     else:
-                        read_names_file.write(f"{var.var_id},{sample.name},{split_str},{span_str},{clip_str}\n")
+                        read_names_file.write(f"{var.var_id},{sample.name},{split_str},{span_str},{clip_str},{split_count},{span_count},{clip_count}\n")
                 try:
                     var.genotype(sample.name).set_format('AB', '%.2g' % (QA / float(QR + QA)))
                 except ZeroDivisionError:
