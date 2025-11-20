@@ -55,7 +55,7 @@ svtyper \
     -i sv.vcf \
     -B sample.bam \
     -l sample.bam.json \
-    > sv.gt.vcf
+    -o sv.gt.vcf
 ```
 
 ### Single-Cell Usage
@@ -73,7 +73,7 @@ svtyper \
     -i sv.vcf \
     -B single_cell.bam \
     --cell_filter_file allowed_cells.txt \
-    > sv.gt.vcf
+    -o sv.gt.vcf
 ```
 
 #### Output Cell IDs with Read Names
@@ -84,7 +84,7 @@ svtyper \
     -B single_cell.bam \
     --read_names_out \
     --output_cell_ids \
-    > sv.gt.vcf
+    -o sv.gt.vcf
 ```
 
 This creates two files:
@@ -100,7 +100,7 @@ svtyper \
     --read_names_out \
     --output_cell_ids \
     --cell_filter_file allowed_cells.txt \
-    > sv.gt.vcf
+    -o sv.gt.vcf
 ```
 
 ### Read Names Output Format
@@ -117,12 +117,41 @@ sv_id,sample,split_reads,span_reads,clip_reads,split_reads_count,span_reads_coun
 SV1,SAMPLE1,read1|read2,read3|read4,read5,2,2,1,Cell_001|Cell_002,Cell_001|Cell_001,Cell_003,2,1,1
 ```
 
+#### Output Count Matrices (`--output_matrices`)
+
+Generate per-cell per-SV count matrices in CSV format:
+
+```bash
+svtyper \
+    -i sv.vcf \
+    -B single_cell.bam \
+    --output_cell_ids \
+    --output_matrices \
+    -o sv.gt.vcf
+```
+
+This creates a `matrices/` subdirectory with the following files:
+- `split_ref_counts.csv`: Reference split read counts per cell per SV
+- `split_alt_counts.csv`: Alt split read counts per cell per SV
+- `span_ref_counts.csv`: Reference spanning pair counts per cell per SV
+- `span_alt_counts.csv`: Alt spanning pair counts per cell per SV
+- `clip_alt_counts.csv`: Alt clipped read counts per cell per SV
+
+Each matrix is in sparse CSV format with cells as rows and SVs as columns:
+```
+cell_id,SV1,SV2,SV3
+Cell_001,2,0,1
+Cell_002,0,3,0
+Cell_003,1,1,2
+```
+
 ## Command Line Options
 
 ### Single-Cell Specific Options
 
 - `--cell_filter_file FILE`: File containing allowed cell IDs (one per line). Only reads from these cells will be processed.
 - `--output_cell_ids`: Output cell IDs from CB tags alongside read names (requires `--read_names_out`).
+- `--output_matrices`: Output per-cell per-SV count matrices to `matrices/` subdirectory (requires `--output_cell_ids`).
 
 ### General Options
 
@@ -169,7 +198,8 @@ with open(input_vcf, "r") as inf, open(output_vcf, "w") as outf:
         read_names_out=True,
         both_sides=False,
         output_cell_ids=True,  # New: output cell IDs
-        cell_filter_file=cell_filter_file  # New: filter by cell IDs
+        cell_filter_file=cell_filter_file,  # New: filter by cell IDs
+        output_matrices=True  # New: output count matrices
     )
 ```
 
@@ -197,7 +227,7 @@ svtyper-sso \
     -i sv.vcf \
     -B sample.bam \
     -l sample.bam.json \
-    > sv.gt.vcf
+    -o sv.gt.vcf
 ```
 
 **Note**: `svtyper-sso` does not yet support the new single-cell features.

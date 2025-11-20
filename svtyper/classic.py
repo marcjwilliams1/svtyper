@@ -45,6 +45,61 @@ def get_cell_id(read):
     except KeyError:
         return "UNKNOWN"
 
+def update_matrix_counts(matrix_dict, sv_id, cell_ids):
+    """Update matrix counts for a given SV and list of cell IDs"""
+    if sv_id not in matrix_dict:
+        matrix_dict[sv_id] = {}
+    for cell_id in cell_ids:
+        matrix_dict[sv_id][cell_id] = matrix_dict[sv_id].get(cell_id, 0) + 1
+
+def write_count_matrices(matrix_data, output_base):
+    """Write count matrices to CSV files in matrices/ subdirectory"""
+    import os
+
+    # Create matrices directory
+    matrix_dir = os.path.join(os.path.dirname(output_base) or '.', 'matrices')
+    os.makedirs(matrix_dir, exist_ok=True)
+
+    # Get all unique cells and SVs across all matrices
+    all_cells = set()
+    all_svs = set()
+
+    for matrix_type, matrix_dict in matrix_data.items():
+        all_svs.update(matrix_dict.keys())
+        for sv_cells in matrix_dict.values():
+            all_cells.update(sv_cells.keys())
+
+    # Sort for consistent output
+    all_cells = sorted(all_cells)
+    all_svs = sorted(all_svs)
+
+    # Write each matrix type
+    matrix_filenames = {
+        'split_ref': 'split_ref_counts.csv',
+        'split_alt': 'split_alt_counts.csv',
+        'span_ref': 'span_ref_counts.csv',
+        'span_alt': 'span_alt_counts.csv',
+        'clip_alt': 'clip_alt_counts.csv'
+    }
+
+    for matrix_type, filename in matrix_filenames.items():
+        filepath = os.path.join(matrix_dir, filename)
+        matrix_dict = matrix_data[matrix_type]
+
+        with open(filepath, 'w') as f:
+            # Write header
+            f.write('cell_id,' + ','.join(all_svs) + '\n')
+
+            # Write each cell's counts
+            for cell_id in all_cells:
+                counts = []
+                for sv_id in all_svs:
+                    count = matrix_dict.get(sv_id, {}).get(cell_id, 0)
+                    counts.append(str(count))
+                f.write(f"{cell_id}," + ','.join(counts) + '\n')
+
+        sys.stderr.write(f'Wrote matrix to {filepath}\n')
+
 def get_args():
     parser = argparse.ArgumentParser(formatter_class=RawTextHelpFormatter, description="\
 svtyper\n\
@@ -72,6 +127,8 @@ description: Compute genotype of structural variants based on breakpoint depth")
                        help='Output cell IDs from CB tags alongside read names (requires --read_names_out)')
     parser.add_argument('--cell_filter_file', metavar='FILE', type=str, required=False, default=None,
                        help='File containing allowed cell IDs, one per line (filters reads by CB tag)')
+    parser.add_argument('--output_matrices', action='store_true', default=False,
+                       help='Output per-cell per-SV count matrices (requires --output_cell_ids)')
     parser.add_argument('--debug', action='store_true', help=argparse.SUPPRESS)
     parser.add_argument('--verbose', action='store_true', default=False, help='Report status updates')
     parser.add_argument('--keep_duplicates', action='store_true', default=False, help='Keep duplicates for read counting (default: True)')
@@ -173,7 +230,8 @@ def sv_genotype(bam_string,
                 read_names_out,
                 both_sides,
                 output_cell_ids=False,
-                cell_filter_file=None):
+                cell_filter_file=None,
+                output_matrices=False):
 
     # Load cell filter if provided
     allowed_cells = load_cell_filter(cell_filter_file)
@@ -256,6 +314,21 @@ def sv_genotype(bam_string,
             read_names_file.write("sv_id,sample,split_reads,span_reads,clip_reads,split_reads_count,span_reads_count,clip_reads_count,split_cells,span_cells,clip_cells,split_cells_count,span_cells_count,clip_cells_count\n")
         else:
             read_names_file.write("sv_id,sample,split_reads,span_reads,clip_reads,split_reads_count,span_reads_count,clip_reads_count\n")
+
+    # Matrix data structures for --output_matrices
+    # Each is a dict: {sv_id: {cell_id: count}}
+    matrix_data = None
+    if output_matrices:
+        if not output_cell_ids:
+            sys.stderr.write('Error: --output_matrices requires --output_cell_ids\n')
+            exit(1)
+        matrix_data = {
+            'split_ref': {},
+            'split_alt': {},
+            'span_ref': {},
+            'span_alt': {},
+            'clip_alt': {}
+        }
 
     # read input VCF
     for line in vcf_in:
@@ -366,6 +439,8 @@ def sv_genotype(bam_string,
             cell_ids_split = []
             cell_ids_clip = []
             cell_ids_span = []
+            cell_ids_ref_split = []
+            cell_ids_ref_span = []
 
             # ref_ciA = ciA
             # ref_ciB = ciB
@@ -389,6 +464,9 @@ def sv_genotype(bam_string,
                         p_reference = prob_mapq(read)
                         ref_seq += p_reference
                         n_ref_seq += math.ceil(p_reference)
+
+                        if output_cell_ids:
+                            cell_ids_ref_split.append(get_cell_id(read))
 
                         read.set_tag('XV', 'R')
                         write_fragment = True
@@ -533,6 +611,9 @@ def sv_genotype(bam_string,
                             ref_span += (ref_straddle_A + ref_straddle_B) * p_reference / 2
                             n_ref_span += math.ceil((ref_straddle_A + ref_straddle_B) * p_reference / 2)
 
+                            if output_cell_ids and (ref_straddle_A or ref_straddle_B):
+                                cell_ids_ref_span.append(get_cell_id(fragment.readA))
+
                 # write to BAM if requested
                 if alignment_outpath is not None and  write_fragment:
                     for read in fragment.primary_reads + [split.read for split in fragment.split_reads]:
@@ -599,26 +680,34 @@ def sv_genotype(bam_string,
                 var.genotype(sample.name).set_format('ASC', int(round(alt_clip)))
                 var.genotype(sample.name).set_format('RP', int(round(ref_span)))
                 var.genotype(sample.name).set_format('AP', int(round(alt_span)))
+                # Update matrix counts if requested
+                if output_matrices and matrix_data is not None:
+                    update_matrix_counts(matrix_data['split_ref'], var.var_id, cell_ids_ref_split)
+                    update_matrix_counts(matrix_data['split_alt'], var.var_id, cell_ids_split)
+                    update_matrix_counts(matrix_data['span_ref'], var.var_id, cell_ids_ref_span)
+                    update_matrix_counts(matrix_data['span_alt'], var.var_id, cell_ids_span)
+                    update_matrix_counts(matrix_data['clip_alt'], var.var_id, cell_ids_clip)
+
                 if read_names_out:
                     split_str = '|'.join(set(read_names_split)) if read_names_split else '.'
                     span_str = '|'.join(set(read_names_span)) if read_names_span else '.'
                     clip_str = '|'.join(set(read_names_clip)) if read_names_clip else '.'
-                    
+
                     # Calculate unique read counts
                     split_count = len(set(read_names_split)) if read_names_split else 0
                     span_count = len(set(read_names_span)) if read_names_span else 0
                     clip_count = len(set(read_names_clip)) if read_names_clip else 0
-                    
+
                     if output_cell_ids:
                         split_cells_str = '|'.join(cell_ids_split) if cell_ids_split else '.'
                         span_cells_str = '|'.join(cell_ids_span) if cell_ids_span else '.'
                         clip_cells_str = '|'.join(cell_ids_clip) if cell_ids_clip else '.'
-                        
+
                         # Calculate unique cell counts
                         split_cells_count = len(set(cell_ids_split)) if cell_ids_split else 0
                         span_cells_count = len(set(cell_ids_span)) if cell_ids_span else 0
                         clip_cells_count = len(set(cell_ids_clip)) if cell_ids_clip else 0
-                        
+
                         read_names_file.write(f"{var.var_id},{sample.name},{split_str},{span_str},{clip_str},{split_count},{span_count},{clip_count},{split_cells_str},{span_cells_str},{clip_cells_str},{split_cells_count},{span_cells_count},{clip_cells_count}\n")
                     else:
                         read_names_file.write(f"{var.var_id},{sample.name},{split_str},{span_str},{clip_str},{split_count},{span_count},{clip_count}\n")
@@ -683,6 +772,11 @@ def sv_genotype(bam_string,
     if breakend_dict:
         logging.warning('Unpaired breakends found in file. These will not be present in output.')
 
+    # Write matrices if requested
+    if output_matrices and matrix_data is not None:
+        out_base = os.path.splitext(vcf_out.name)[0] if vcf_out.name != '<stdout>' else 'sv_genotypes'
+        write_count_matrices(matrix_data, out_base)
+
     # close the files
     vcf_in.close()
     vcf_out.close()
@@ -734,7 +828,8 @@ def main():
                 args.read_names_out,
                 args.both_sides,
                 args.output_cell_ids,
-                args.cell_filter_file)
+                args.cell_filter_file,
+                args.output_matrices)
 
 # --------------------------------------
 # command-line/console entrypoint
