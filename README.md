@@ -145,6 +145,39 @@ Cell_002,0,3,0
 Cell_003,1,1,2
 ```
 
+If you want to combine these files into a single data frame, you can use the following R function:
+
+```r
+library(tidyr)
+library(dplyr)
+read_svtyper_matrices <- function(folder){
+  split_alt <- fread(file.path(folder, "matrices", "split_alt_counts.csv")) %>% 
+    pivot_longer(-cell_id, names_to = "sv_id", values_to = "alt_seq_reads")
+  split_ref <- fread(file.path(folder, "matrices", "split_ref_counts.csv")) %>% 
+    pivot_longer(-cell_id, names_to = "sv_id", values_to = "ref_seq_reads")
+  
+  span_alt <- fread(file.path(folder, "matrices", "span_alt_counts.csv")) %>% 
+    pivot_longer(-cell_id, names_to = "sv_id", values_to = "alt_span_reads")
+  span_ref <- fread(file.path(folder, "matrices", "span_ref_counts.csv")) %>% 
+    pivot_longer(-cell_id, names_to = "sv_id", values_to = "ref_span_reads")
+  
+  clip_alt <- fread(file.path(folder, "matrices", "clip_alt_counts.csv")) %>% 
+    pivot_longer(-cell_id, names_to = "sv_id", values_to = "alt_clipped_reads")
+
+  svs <- full_join(split_alt, split_ref, by = c("cell_id", "sv_id")) %>% 
+    full_join(span_alt, by = c("cell_id", "sv_id")) %>% 
+    full_join(span_ref, by = c("cell_id", "sv_id")) %>% 
+    full_join(clip_alt, by = c("cell_id", "sv_id")) %>% 
+    mutate(across(everything(), ~ replace_na(.x, 0))) %>% 
+    mutate(alt_counts = alt_seq_reads + alt_span_reads + alt_clipped_reads) %>% 
+    mutate(ref_counts = ref_seq_reads + ref_span_reads) %>% 
+    mutate(total_counts = alt_counts + ref_counts) %>% 
+    filter(total_counts > 0)
+  
+  return(svs)
+}
+```
+
 ## Command Line Options
 
 ### Single-Cell Specific Options
