@@ -1062,6 +1062,32 @@ class SplitRead(object):
 
     # reference position where the alignment would have started
     # if the entire query sequence would have aligned
+
+    def get_clipped_sequence(self):
+        """Return (clip_seq, side) where side is 'left' or 'right', or (None, None)."""
+        try:
+            cigar = self.read.cigar
+            qs = self.read.query_sequence
+        except Exception:
+            return (None, None)
+        if cigar is None or len(cigar) == 0:
+            return (None, None)
+        # left clip
+        if cigar[0][0] in (4,5):
+            clip_len = cigar[0][1]
+            if qs is None:
+                return (None, None)
+            clip_seq = qs[:clip_len]
+            return (clip_seq, 'left')
+        # right clip
+        if cigar[-1][0] in (4,5):
+            clip_len = cigar[-1][1]
+            if qs is None:
+                return (None, None)
+            clip_seq = qs[-clip_len:]
+            return (clip_seq, 'right')
+        return (None, None)
+
     @staticmethod
     def get_start_diagonal(split_piece):
         sclip = split_piece.query_pos.query_start
