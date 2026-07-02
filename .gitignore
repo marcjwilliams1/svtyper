@@ -10,6 +10,14 @@
 # Folders #
 sandbox/
 matrices/
+logs/
+.eggs/
+*.egg-info/
+
+# Python #
+##########
+__pycache__/
+*.pyc
 
 # Packages #
 ############

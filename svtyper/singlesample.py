@@ -259,7 +259,7 @@ def make_detailed_empty_genotype_result(variant_id, sample_name):
     }
 
 
-def gather_split_read_evidence(sam_fragment, breakpoint, split_slop, min_aligned, reference_fasta=None, clip_context=100, clip_k=8, clip_max_mismatch=2):
+def gather_split_read_evidence(sam_fragment, breakpoint, split_slop, min_aligned, reference_fasta=None, clip_context=5, clip_k=8, clip_max_mismatch=2, clip_min_length=3):
     (ref_seq, alt_seq, alt_clip) = (0, 0, 0)
 
     elems = ('chrom', 'pos', 'ci', 'is_reverse')
@@ -300,7 +300,7 @@ def gather_split_read_evidence(sam_fragment, breakpoint, split_slop, min_aligned
                 if clip_seq:
                     try:
                         from svtyper.clipmatcher import match_clip_to_breakpoint_windows
-                        matched, dist, matched_side, orientation = match_clip_to_breakpoint_windows(clip_seq, reference_fasta, breakpoint, context=clip_context, k=clip_k, max_mismatch=clip_max_mismatch)
+                        matched, dist, matched_side, orientation = match_clip_to_breakpoint_windows(clip_seq, reference_fasta, breakpoint, context=clip_context, k=clip_k, max_mismatch=clip_max_mismatch, min_clip_length=clip_min_length)
                     except Exception:
                         matched = False
 
@@ -391,7 +391,7 @@ def gather_paired_end_evidence(fragment, breakpoint, min_aligned):
 
     return (ref_span, alt_span, ref_ciA, ref_ciB)
 
-def tally_variant_read_fragments(split_slop, min_aligned, breakpoint, sam_fragments, debug, reference_fasta=None, clip_context=100, clip_k=8, clip_max_mismatch=2):
+def tally_variant_read_fragments(split_slop, min_aligned, breakpoint, sam_fragments, debug, reference_fasta=None, clip_context=5, clip_k=8, clip_max_mismatch=2, clip_min_length=3):
     # initialize counts to zero
     ref_span, alt_span = 0, 0
     ref_seq, alt_seq = 0, 0
@@ -404,7 +404,7 @@ def tally_variant_read_fragments(split_slop, min_aligned, breakpoint, sam_fragme
         fragment = sam_fragments[query_name]
 
         (ref_seq_calc, alt_seq_calc, alt_clip_calc) = \
-                gather_split_read_evidence(fragment, breakpoint, split_slop, min_aligned, reference_fasta, clip_context, clip_k, clip_max_mismatch)
+                gather_split_read_evidence(fragment, breakpoint, split_slop, min_aligned, reference_fasta, clip_context, clip_k, clip_max_mismatch, clip_min_length)
 
         ref_seq += ref_seq_calc
         alt_seq += alt_seq_calc

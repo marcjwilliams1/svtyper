@@ -46,6 +46,14 @@ This fork adds comprehensive support for single-cell BAM files with cell barcode
 - **Cell ID Output**: Export cell IDs corresponding to supporting reads  
 - **Count Statistics**: Get unique counts of reads and cells supporting each variant
 
+### ✂️ Conservative Clipped-Read Matching
+When a reference FASTA is supplied (`-T/--ref_fasta`) together with `--clip_read_support`, soft-clipped portions of split reads are checked against the reference before being counted as support for a breakpoint, instead of being counted automatically:
+
+- For each breakpoint side, the clipped sequence is compared only to reference bases immediately adjacent to that breakpoint's own reported position (within `--clip_context` bp), in both possible directions (upstream/downstream of the anchor) and both orientations (forward/reverse-complement), since a clip's true relationship to the junction isn't known in advance.
+- The allowed edit distance automatically scales down for short clips (see `--clip_max_mismatch`), and clips shorter than `--clip_min_length` are discarded outright, since very short clips (1-2bp) carry too little sequence information to be matched reliably — an "exact" match at that length is expected to occur by chance.
+- This is deliberately conservative: a clipped read that doesn't match the reference at its breakpoint is **not** counted as support, even though it would have been counted without `-T/--ref_fasta`.
+- See `--clip_context`, `--clip_max_mismatch`, and `--clip_min_length` under [Command Line Options](#command-line-options) below.
+
 ## Example Usage
 
 ### Basic Usage
@@ -191,7 +199,7 @@ read_svtyper_matrices <- function(folder){
 - `-i, --input_vcf FILE`: VCF input (default: stdin)
 - `-o, --output_vcf FILE`: Output VCF (default: stdout)
 - `-B, --bam FILE`: BAM or CRAM file(s), comma-separated for multiple samples
-- `-T, --ref_fasta FILE`: Indexed reference FASTA file (recommended for CRAM files)
+- `-T, --ref_fasta FILE`: Indexed reference FASTA file (recommended for CRAM files; also enables clipped-read matching, see below)
 - `-l, --lib_info FILE`: Create/read JSON file of library information
 - `--read_names_out`: Output supporting read names to separate file
 - `--keep_duplicates`: Keep duplicate reads for counting (default: False)
@@ -199,7 +207,17 @@ read_svtyper_matrices <- function(folder){
 - `--max_reads INT`: Maximum reads to assess per variant (default: unlimited)
 - `-m, --min_aligned INT`: Minimum aligned bases for read evidence (default: 20)
 
+### Clipped-Read Matching Options
+
+These only take effect when both `--clip_read_support` and `-T/--ref_fasta` are supplied. Without `-T/--ref_fasta`, all clipped split reads are counted automatically (previous behavior); with it, clips must pass the checks below to count.
+
+- `--clip_context INT`: search radius (bp) around each breakpoint's own reported position within which a clip must match the reference to be anchored at the breakpoint junction. Independent of the VCF's CIPOS/CIEND (not all callers report these reliably). Default: `5`.
+- `--clip_max_mismatch INT`: ceiling on the edit distance allowed for a clipped-read match. The actual tolerance used is scaled down for short clips (roughly 1 mismatch per 7bp), capped at this value — e.g. a 3-6bp clip requires an exact match regardless of this setting. Default: `2`.
+- `--clip_min_length INT`: minimum clip length (bp) required before a match is even attempted; shorter clips are discarded outright since they carry too little sequence information to be matched reliably. Default: `3`.
+- `--clip_k INT`: unused (kept only for backward CLI compatibility with earlier versions; the matcher no longer uses a k-mer prefilter). Default: `8`.
+
 ## Python Library Usage
+
 
 ```python
 import svtyper.classic as svt
@@ -232,9 +250,14 @@ with open(input_vcf, "r") as inf, open(output_vcf, "w") as outf:
         both_sides=False,
         output_cell_ids=True,  # New: output cell IDs
         cell_filter_file=cell_filter_file,  # New: filter by cell IDs
-        output_matrices=True  # New: output count matrices
+        output_matrices=True,  # New: output count matrices
+        clip_context=5,          # clipped-read matching: anchor search radius (bp)
+        clip_max_mismatch=2,     # clipped-read matching: max edit distance ceiling
+        clip_min_length=3        # clipped-read matching: minimum clip length (bp)
     )
 ```
+
+Clipped-read matching (`clip_context`/`clip_max_mismatch`/`clip_min_length`) only has an effect when `clip_read_support=True` and `ref_fasta` is set to a valid, indexed FASTA path.
 
 ## Single-Cell BAM Requirements
 

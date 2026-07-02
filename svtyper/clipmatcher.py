@@ -57,83 +57,118 @@ def edit_distance_max(s, t, maxd):
     return dist
 
 
-def _kmer_prefilter(clip_seq, window_seq, k=8):
-    """Return True if any k-mer from clip_seq appears in window_seq."""
-    if clip_seq is None or window_seq is None:
-        return False
-    L = len(clip_seq)
-    k = min(k, max(1, L))
-    clip_seq = clip_seq.upper()
-    window_seq = window_seq.upper()
-    seen = set()
-    for i in range(0, L - k + 1):
-        seen.add(clip_seq[i:i+k])
-    for km in seen:
-        if km in window_seq:
-            return True
-    return False
-
-
-def match_clip_to_breakpoint_windows(clip_seq, ref_fasta_path, breakpoint, context=100, k=8, max_mismatch=2):
+def effective_max_mismatch(clip_len, max_mismatch):
     """
-    Attempt to match clip_seq anywhere in +/-context bases around each breakpoint side.
-    Returns (matched, distance, side, orientation) where side is 'A' or 'B' and orientation is 'rc' or 'fwd'.
-    Conservative: returns False if reference not available or no match.
+    Scale down the allowed edit distance for short clips so that the tolerance
+    never exceeds a fixed fraction of the clip length. Without this, a flat
+    max_mismatch (e.g. 2) is nearly meaningless for very short clips (e.g. a
+    4bp clip with 2 allowed mismatches is only 50% identity) and produces
+    spurious matches almost anywhere in the search window.
+    """
+    if clip_len <= 0:
+        return 0
+    # allow roughly 1 mismatch per 7 bases, capped by the requested max_mismatch
+    scaled = clip_len // 7
+    return max(0, min(max_mismatch, scaled))
+
+
+def match_clip_to_breakpoint_windows(clip_seq, ref_fasta_path, breakpoint, context=5, k=8, max_mismatch=2, min_clip_length=3):
+    """
+    Match a clipped read's sequence against the reference immediately
+    adjacent to the breakpoint junction, rather than scanning broadly across
+    a wide window around the breakpoint.
+
+    Rationale: searching a broad window (e.g. +/-100bp) for *any* occurrence
+    of the clip sequence is not the same as testing whether the clip
+    actually represents the breakpoint-adjacent sequence. Short clips in
+    particular have few possible sequences (e.g. only 4^3=64 possible 3-mers)
+    so an incidental exact match somewhere unrelated within a wide window is
+    expected by chance alone, even though it says nothing about whether the
+    read truly supports the junction. (Confirmed empirically: some clips
+    previously "matched" 50-90bp away from the true breakpoint.)
+
+    Instead, for each breakpoint side we only consider anchor positions
+    within `pos +/- context` (default 5bp) of the breakpoint's own reported
+    position. This intentionally does NOT use the VCF's CIPOS/CIEND
+    confidence interval: not all SV callers report it reliably (or at all),
+    and some pipelines pad it with an arbitrary/placeholder value, so it
+    can't be trusted as a meaningful bound on positional uncertainty.
+    `context` alone defines the full search radius around `pos`.
+
+    For each anchor position we check the reference immediately to its left
+    and right (since a clip can represent sequence that continues in either
+    direction relative to the anchor), in both forward and
+    reverse-complement orientation (since the correct strand/direction isn't
+    always known without deeper breakend bookkeeping).
+
+    Clips shorter than `min_clip_length` are rejected outright, regardless of
+    match quality: very short clips (1-2bp) have so few possible sequences
+    (4 or 16) that even an *exact* match within a small anchor window is
+    expected to occur by chance alone across the handful of candidate
+    positions/directions/orientations checked, so they carry essentially no
+    information about whether the read truly supports the breakpoint.
+
+    `k` is accepted for backward compatibility with existing CLI wiring but
+    is no longer used: the k-mer prefilter is unnecessary now that the
+    candidate search space is already small.
+
+    Returns (matched, distance, side, orientation).
     """
     if clip_seq is None or len(clip_seq) == 0:
+        return (False, None, None, None)
+    if len(clip_seq) < min_clip_length:
         return (False, None, None, None)
 
     clip_seq_u = clip_seq.upper()
     clip_rc = revcomp(clip_seq_u)
+    L = len(clip_seq_u)
+    maxd = effective_max_mismatch(L, max_mismatch)
 
-    # open fasta
     try:
         fasta = pysam.FastaFile(ref_fasta_path)
     except Exception:
         return (False, None, None, None)
 
-    L = len(clip_seq_u)
-    maxd = max_mismatch
-
     for side in ('A', 'B'):
-        chrom = breakpoint[side]['chrom']
-        pos = int(breakpoint[side]['pos'])
-        # fetch a window around pos
-        start = max(0, pos - context)
-        end = pos + context
+        info = breakpoint.get(side)
+        if not info:
+            continue
+        chrom = info['chrom']
+        pos = int(info['pos'])
+
+        # candidate anchor positions: a fixed radius (`context`) around the
+        # breakpoint's own position -- deliberately independent of CIPOS/CIEND
+        anchor_lo = pos - context
+        anchor_hi = pos + context
+
+        # fetch one block covering all candidate positions (and enough
+        # padding on either side for the clip length itself)
+        block_start0 = max(0, anchor_lo - L - 1)  # 0-based
+        block_end0 = anchor_hi + L                # 0-based, exclusive
         try:
-            win = fasta.fetch(chrom, start, end).upper()
+            block = fasta.fetch(chrom, block_start0, block_end0).upper()
         except Exception:
             continue
 
-        # quick k-mer prefilter for forward and rc
-        if not _kmer_prefilter(clip_seq_u, win, k) and not _kmer_prefilter(clip_rc, win, k):
-            continue
+        for apos in range(anchor_lo, anchor_hi + 1):
+            # "right": reference bases immediately downstream of apos
+            r_off = apos - block_start0
+            sub_right = block[r_off:r_off + L]
+            # "left": reference bases immediately upstream of (and including) apos
+            l_off = apos - L - block_start0
+            sub_left = block[max(0, l_off):max(0, l_off) + L] if l_off >= 0 else None
 
-        # sliding window exact-length alignment with edit-distance cutoff
-        if len(win) < L:
-            # compare whole window to clip_seq prefix/suffix
-            d1 = edit_distance_max(clip_seq_u[:len(win)], win, maxd)
-            if d1 <= maxd:
-                fasta.close()
-                return (True, d1, side, 'fwd')
-            d2 = edit_distance_max(clip_rc[:len(win)], win, maxd)
-            if d2 <= maxd:
-                fasta.close()
-                return (True, d2, side, 'rc')
-            continue
-
-        # iterate candidate substrings
-        for i in range(0, len(win) - L + 1):
-            sub = win[i:i+L]
-            d = edit_distance_max(clip_seq_u, sub, maxd)
-            if d <= maxd:
-                fasta.close()
-                return (True, d, side, 'fwd')
-            d = edit_distance_max(clip_rc, sub, maxd)
-            if d <= maxd:
-                fasta.close()
-                return (True, d, side, 'rc')
+            for sub in (sub_right, sub_left):
+                if not sub or len(sub) != L:
+                    continue
+                d = edit_distance_max(clip_seq_u, sub, maxd)
+                if d <= maxd:
+                    fasta.close()
+                    return (True, d, side, 'fwd')
+                d = edit_distance_max(clip_rc, sub, maxd)
+                if d <= maxd:
+                    fasta.close()
+                    return (True, d, side, 'rc')
 
     fasta.close()
     return (False, None, None, None)
