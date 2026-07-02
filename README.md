@@ -286,7 +286,7 @@ svtyper-sso \
     -o sv.gt.vcf
 ```
 
-**Note**: `svtyper-sso` does not yet support the new single-cell features.
+**Note**: `svtyper-sso` does not yet support the new single-cell features. It also does not have a separate `--clip_read_support` flag: clipped-read matching activates automatically whenever `-T/--ref_fasta` is supplied, using the same `--clip_context`/`--clip_max_mismatch`/`--clip_min_length` options as `svtyper` (see [Clipped-Read Matching Options](#clipped-read-matching-options)).
 
 ## Development
 
