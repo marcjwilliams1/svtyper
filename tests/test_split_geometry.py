@@ -76,6 +76,29 @@ class TestSplitGeometry(unittest.TestCase):
         read = FakeRead("chr1", 500, 560, [(0, 60), (4, 20)])
         self.assertFalse(clip_supports("DUP", True, False, 101, 200, read))
 
+    # INV: an inversion breakend anchors reads by BOTH reference_end (one
+    # junction) and reference_start (the other junction). o1=o2=False, posA=100,
+    # posB=200. All four must be detected.
+    def test_inv_reference_end_at_posA(self):
+        read = FakeRead("chr1", 50, 100, [(0, 50), (4, 30)])   # reference_end=100
+        self.assertTrue(clip_supports("INV", False, False, 100, 200, read))
+
+    def test_inv_reference_end_at_posB(self):
+        read = FakeRead("chr1", 150, 200, [(0, 50), (4, 30)])  # reference_end=200
+        self.assertTrue(clip_supports("INV", False, False, 100, 200, read))
+
+    def test_inv_reference_start_at_posA(self):
+        read = FakeRead("chr1", 100, 150, [(4, 30), (0, 50)])  # reference_start=100
+        self.assertTrue(clip_supports("INV", False, False, 100, 200, read))
+
+    def test_inv_reference_start_at_posB(self):
+        read = FakeRead("chr1", 200, 250, [(4, 30), (0, 50)])  # reference_start=200
+        self.assertTrue(clip_supports("INV", False, False, 100, 200, read))
+
+    def test_inv_clip_far_from_breakpoints_not_supported(self):
+        read = FakeRead("chr1", 500, 560, [(0, 60), (4, 20)])
+        self.assertFalse(clip_supports("INV", False, False, 100, 200, read))
+
 
 if __name__ == "__main__":
     unittest.main()

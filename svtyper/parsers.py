@@ -1265,7 +1265,24 @@ class SplitRead(object):
                     pos_left,
                     is_reverse_left,
                     split_slop)
-        elif svtype in ('INV', 'BND'):
+        elif svtype == 'INV':
+            # An inversion breakend participates in TWO junctions with opposite
+            # anchor orientations: one junction's split/clip pieces are anchored
+            # by reference_end at a breakend, the other's by reference_start.
+            # Modeling INV with a single orientation (o1=o2=False) tests only
+            # reference_end and silently misses ~half the evidence (the whole
+            # reference_start-anchored junction). So test each piece against each
+            # breakend in BOTH orientations. (Verified with a fake-read harness;
+            # BND does not need this because its per-end orientation is inferred
+            # from the alt allele and is definite.)
+            def _anchor_near(piece, chrom, pos):
+                return (self.check_split_support(piece, chrom, pos, False, split_slop)
+                        or self.check_split_support(piece, chrom, pos, True, split_slop))
+            left_split = (_anchor_near(self.query_left, chrom_left, pos_left)
+                          or _anchor_near(self.query_left, chrom_right, pos_right))
+            right_split = (_anchor_near(self.query_right, chrom_left, pos_left)
+                           or _anchor_near(self.query_right, chrom_right, pos_right))
+        elif svtype == 'BND':
                 # check all possible sides
             left_split_left = self.check_split_support(self.query_left,
                     chrom_left,
