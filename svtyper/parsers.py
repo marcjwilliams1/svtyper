@@ -1231,7 +1231,12 @@ class SplitRead(object):
         left_split = False
         right_split = False
 
-        if svtype == 'DEL' or svtype == 'INS' or svtype == 'DUP':
+        if (svtype == 'DEL' or svtype == 'INS'
+                or (svtype == 'DUP' and not self.is_soft_clip)):
+            # Genuine SA-tag splits (any type) and DEL/INS soft-clips: query_left
+            # and query_right are two real alignments ordered by reference
+            # coordinate, so match left-to-left against the like-ordered
+            # breakpoints.
             left_split = self.check_split_support(self.query_left,
                     chrom_left,
                     pos_left,
@@ -1241,6 +1246,24 @@ class SplitRead(object):
                     chrom_right,
                     pos_right,
                     is_reverse_right,
+                    split_slop)
+        elif svtype == 'DUP':
+            # Soft-clip-only pseudo-split on a DUP. Here query_left/query_right
+            # are ordered by *clip side* (one real alignment + a dummy piece),
+            # not reference coordinate. A tandem-dup junction is everted, so the
+            # real alignment's aligned end sits at the opposite breakpoint from
+            # where a DEL's would: match query_left<->pos_right and
+            # query_right<->pos_left. Without this swap, DUP soft-clip support is
+            # silently lost (verified empirically; upstream had this swap).
+            left_split = self.check_split_support(self.query_left,
+                    chrom_right,
+                    pos_right,
+                    is_reverse_right,
+                    split_slop)
+            right_split = self.check_split_support(self.query_right,
+                    chrom_left,
+                    pos_left,
+                    is_reverse_left,
                     split_slop)
         elif svtype in ('INV', 'BND'):
                 # check all possible sides
