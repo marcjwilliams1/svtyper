@@ -129,6 +129,14 @@ description: Compute genotype of structural variants based on breakpoint depth")
                        help='File containing allowed cell IDs, one per line (filters reads by CB tag)')
     parser.add_argument('--output_matrices', action='store_true', default=False,
                        help='Output per-cell per-SV count matrices (requires --output_cell_ids)')
+    parser.add_argument('--clip_context', metavar='INT', type=int, default=5, required=False,
+                       help='search radius (bp) around each breakpoint\'s own reported position (independent of any VCF CIPOS/CIEND) within which clipped-read matches are anchored to the breakpoint junction (requires -T/--ref_fasta) [5]')
+    parser.add_argument('--clip_k', metavar='INT', type=int, default=8, required=False,
+                       help='unused (kept for backward CLI compatibility); the clipped-read matcher no longer uses a k-mer prefilter [8]')
+    parser.add_argument('--clip_max_mismatch', metavar='INT', type=int, default=2, required=False,
+                       help='maximum edit distance allowed for a clipped-read match (requires -T/--ref_fasta) [2]')
+    parser.add_argument('--clip_min_length', metavar='INT', type=int, default=11, required=False,
+                       help='minimum clip length (bp) required before attempting a match; shorter clips are discarded outright since they carry too little sequence information to be matched reliably (requires -T/--ref_fasta) [11]')
     parser.add_argument('--debug', action='store_true', help=argparse.SUPPRESS)
     parser.add_argument('--verbose', action='store_true', default=False, help='Report status updates')
     parser.add_argument('--keep_duplicates', action='store_true', default=False, help='Keep duplicates for read counting (default: True)')
@@ -231,7 +239,11 @@ def sv_genotype(bam_string,
                 both_sides,
                 output_cell_ids=False,
                 cell_filter_file=None,
-                output_matrices=False):
+                output_matrices=False,
+                clip_context=5,
+                clip_k=8,
+                clip_max_mismatch=2,
+                clip_min_length=11):
 
     # Load cell filter if provided
     allowed_cells = load_cell_filter(cell_filter_file)
@@ -432,7 +444,6 @@ def sv_genotype(bam_string,
             alt_clip = 0
             n_ref_span, n_alt_span = 0, 0
             n_ref_seq, n_alt_seq = 0, 0
-            n_alt_clip = 0
             read_names_split = []
             read_names_clip = []
             read_names_span = []
@@ -481,15 +492,40 @@ def sv_genotype(bam_string,
                     # p_alt = prob_mapq(split.query_left) * prob_mapq(split.query_right)
                     p_alt = (prob_mapq(split.query_left) * split_lr[0] + prob_mapq(split.query_right) * split_lr[1]) / 2.0
                     if split.is_soft_clip:
+                        # attempt to match clipped sequence to breakpoint windows when a reference fasta is
+                        # supplied; conservative: unmatched clips are not counted when a reference is given
+                        clip_matched = True
+                        if ref_fasta is not None:
+                            clip_matched = False
+                            try:
+                                clip_seq, clip_side = split.get_clipped_sequence(
+                                    anchor_positions=[(chromA, posA), (chromB, posB)])
+                            except Exception:
+                                clip_seq, clip_side = (None, None)
+                            if clip_seq:
+                                try:
+                                    from svtyper.clipmatcher import match_clip_to_breakpoint_windows
+                                    breakpoint = {
+                                        'A': {'chrom': chromA, 'pos': posA, 'ci': ciA, 'is_reverse': o1_is_reverse},
+                                        'B': {'chrom': chromB, 'pos': posB, 'ci': ciB, 'is_reverse': o2_is_reverse},
+                                        'svtype': svtype,
+                                    }
+                                    clip_matched, clip_dist, clip_matched_side, clip_orientation = \
+                                        match_clip_to_breakpoint_windows(clip_seq, ref_fasta, breakpoint,
+                                                                          context=clip_context, k=clip_k,
+                                                                          max_mismatch=clip_max_mismatch,
+                                                                          min_clip_length=clip_min_length)
+                                except Exception:
+                                    clip_matched = False
+                        if not clip_matched:
+                            continue
                         alt_clip += p_alt
-                        if p_alt > 0.5 and both_sides == True:
-                            n_alt_clip += math.ceil(p_alt)
-                            read_names_clip.append(split.query_name)
-                            if output_cell_ids:
-                                cell_ids_clip.append(get_cell_id(split.read))
-                            split.tag_split(p_alt)
-                            write_fragment = True
-                        elif p_alt > 0 and both_sides == False:
+                        # clip evidence is inherently single-sided (the "other side" of a clip
+                        # is an unmapped placeholder, so p_alt can never exceed 0.5) - --both_sides
+                        # only makes sense for genuine two-sided split/span evidence, so clips are
+                        # always counted here regardless of it, rather than being unconditionally
+                        # zeroed out below
+                        if p_alt > 0:
                             read_names_clip.append(split.query_name)
                             if output_cell_ids:
                                 cell_ids_clip.append(get_cell_id(split.read))
@@ -630,7 +666,6 @@ def sv_genotype(bam_string,
                 print('n_alt_span:', n_alt_span)
                 print('n_ref_seq:', n_ref_seq)
                 print('n_alt_seq:', n_alt_seq)
-                print('n_alt_clip:', n_alt_clip)
 
             # in the absence of evidence for a particular type, ignore the reference
             # support for that type as well
@@ -647,7 +682,8 @@ def sv_genotype(bam_string,
                 alt_clip = 0
             
             if both_sides == True:
-                alt_clip = n_alt_clip
+                # alt_clip intentionally left untouched here: --both_sides gates split/span
+                # evidence, but clip evidence (accumulated above) is never subject to it
                 alt_span = n_alt_span
                 alt_seq = n_alt_seq
             
@@ -829,7 +865,11 @@ def main():
                 args.both_sides,
                 args.output_cell_ids,
                 args.cell_filter_file,
-                args.output_matrices)
+                args.output_matrices,
+                args.clip_context,
+                args.clip_k,
+                args.clip_max_mismatch,
+                args.clip_min_length)
 
 # --------------------------------------
 # command-line/console entrypoint

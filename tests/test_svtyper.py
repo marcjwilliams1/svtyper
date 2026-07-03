@@ -55,6 +55,80 @@ class TestCigarParsing(unittest.TestCase):
         split_piece2.set_reference_end(34)
         self.assertEqual(p.SplitRead.get_end_diagonal(split_piece2), 34 - (2 + 8))
 
+_REF_CONSUMING_OPS = (0, 2, 3, 7, 8)  # M, D, N, =, X
+
+
+class FakeRead(object):
+    """Minimal stand-in for a pysam.AlignedSegment, exposing just the
+    attributes get_clipped_sequence() reads."""
+    def __init__(self, cigar_string, seq, reference_start=1000, reference_name='1'):
+        self.cigar = p.SplitRead.cigarstring_to_tuple(cigar_string)
+        self.query_sequence = seq
+        self.query_name = 'fake_read'
+        self.reference_start = reference_start
+        self.reference_name = reference_name
+        ref_span = sum(n for op, n in self.cigar if op in _REF_CONSUMING_OPS)
+        self.reference_end = reference_start + ref_span
+
+
+class TestGetClippedSequence(unittest.TestCase):
+    def _clip(self, cigar_string, seq, reference_start=1000, reference_name='1', anchor_positions=None):
+        split = p.SplitRead(FakeRead(cigar_string, seq, reference_start, reference_name), None)
+        return split.get_clipped_sequence(anchor_positions=anchor_positions)
+
+    def test_left_clip_only(self):
+        self.assertEqual(self._clip('3S7M', 'AAATTTTTTT'), ('AAA', 'left'))
+
+    def test_right_clip_only(self):
+        self.assertEqual(self._clip('7M3S', 'TTTTTTTAAA'), ('AAA', 'right'))
+
+    def test_no_clip(self):
+        self.assertEqual(self._clip('10M', 'TTTTTTTTTT'), (None, None))
+
+    def test_both_clipped_no_anchor_prefers_longer_right(self):
+        # left clip is 3bp, right clip is 5bp: without anchor info, fall
+        # back to the longer, more informative clip (right) rather than
+        # always the left one
+        self.assertEqual(self._clip('3S7M5S', 'AAATTTTTTTGGGGG'), ('GGGGG', 'right'))
+
+    def test_both_clipped_no_anchor_prefers_longer_left(self):
+        self.assertEqual(self._clip('5S7M3S', 'GGGGGTTTTTTTAAA'), ('GGGGG', 'left'))
+
+    def test_both_clipped_no_anchor_equal_length_ties_to_left(self):
+        self.assertEqual(self._clip('3S7M3S', 'AAATTTTTTTGGG'), ('AAA', 'left'))
+
+    def test_both_clipped_prefers_side_closest_to_anchor(self):
+        # reference_start=1000, reference_end=1007 (3S7M5S).
+        # left edge (1000) is right next to breakpoint anchor 999: pick left,
+        # even though the right clip (5bp) is longer than the left (3bp).
+        self.assertEqual(
+            self._clip('3S7M5S', 'AAATTTTTTTGGGGG', reference_start=1000, anchor_positions=[('1', 999)]),
+            ('AAA', 'left'))
+
+    def test_both_clipped_prefers_side_closest_to_anchor_right(self):
+        # right edge (1007) is right next to breakpoint anchor 1008: pick
+        # right, even though it's not the longer clip in this case either
+        # (both 3bp here, but distance should still decide it explicitly).
+        self.assertEqual(
+            self._clip('3S7M3S', 'AAATTTTTTTGGG', reference_start=1000, anchor_positions=[('1', 1008)]),
+            ('GGG', 'right'))
+
+    def test_anchor_on_different_chrom_is_ignored(self):
+        # anchor is on chrom '2', read is on chrom '1' -> no usable anchor,
+        # falls back to longer-clip behavior (right, 5bp > 3bp)
+        self.assertEqual(
+            self._clip('3S7M5S', 'AAATTTTTTTGGGGG', reference_start=1000, reference_name='1',
+                        anchor_positions=[('2', 999)]),
+            ('GGGGG', 'right'))
+
+    def test_anchor_equidistant_falls_back_to_longer_clip(self):
+        # anchor is exactly between the two edges (1000 and 1007) -> tie,
+        # falls back to the longer clip (right, 5bp)
+        self.assertEqual(
+            self._clip('3S7M5S', 'AAATTTTTTTGGGGG', reference_start=1000, anchor_positions=[('1', 1003.5)]),
+            ('GGGGG', 'right'))
+
+
 class TestIntegration(unittest.TestCase):
     def setUp(self):
         pass
