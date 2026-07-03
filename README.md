@@ -213,7 +213,7 @@ These only take effect when both `--clip_read_support` and `-T/--ref_fasta` are 
 
 - `--clip_context INT`: search radius (bp) around each breakpoint's own reported position within which a clip must match the reference to be anchored at the breakpoint junction. Independent of the VCF's CIPOS/CIEND (not all callers report these reliably). Default: `5`.
 - `--clip_max_mismatch INT`: ceiling on the edit distance allowed for a clipped-read match. The actual tolerance used is scaled down for short clips (roughly 1 mismatch per 7bp), capped at this value — e.g. a 3-6bp clip requires an exact match regardless of this setting. Default: `2`.
-- `--clip_min_length INT`: minimum clip length (bp) required before a match is even attempted; shorter clips are discarded outright since they carry too little sequence information to be matched reliably. Default: `3`.
+- `--clip_min_length INT`: minimum clip length (bp) required before a match is even attempted; shorter clips are discarded outright since they carry too little sequence information to be matched reliably. Default: `11`, benchmarked to remove >99.99% of false-positive off-target clip support (value of 3 will remove ~99.7%) with minimal loss of true-positive signal; any residual errors are likely from challenging SVs (e.g. in repetitive regions) better handled by filtering upstream.
 - `--clip_k INT`: unused (kept only for backward CLI compatibility with earlier versions; the matcher no longer uses a k-mer prefilter). Default: `8`.
 
 ## Python Library Usage
@@ -253,7 +253,7 @@ with open(input_vcf, "r") as inf, open(output_vcf, "w") as outf:
         output_matrices=True,  # New: output count matrices
         clip_context=5,          # clipped-read matching: anchor search radius (bp)
         clip_max_mismatch=2,     # clipped-read matching: max edit distance ceiling
-        clip_min_length=3        # clipped-read matching: minimum clip length (bp)
+        clip_min_length=11       # clipped-read matching: minimum clip length (bp)
     )
 ```
 

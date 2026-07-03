@@ -35,8 +35,8 @@ description: Compute genotype of structural variants based on breakpoint depth o
                        help='search radius (bp) around each breakpoint\'s own reported position (independent of any VCF CIPOS/CIEND) within which clipped-read matches are anchored to the breakpoint junction (requires -T/--ref_fasta) [5]')
     parser.add_argument('--clip_max_mismatch', metavar='INT', type=int, default=2, required=False,
                        help='maximum edit distance allowed for a clipped-read match (requires -T/--ref_fasta) [2]')
-    parser.add_argument('--clip_min_length', metavar='INT', type=int, default=3, required=False,
-                       help='minimum clip length (bp) required before attempting a match; shorter clips are discarded outright since they carry too little sequence information to be matched reliably (requires -T/--ref_fasta) [3]')
+    parser.add_argument('--clip_min_length', metavar='INT', type=int, default=11, required=False,
+                       help='minimum clip length (bp) required before attempting a match; shorter clips are discarded outright since they carry too little sequence information to be matched reliably (requires -T/--ref_fasta) [11]')
     parser.add_argument('--debug', action='store_true', help=argparse.SUPPRESS)
     parser.add_argument('--cores', type=int, metavar='INT', required=False, default=None, help='number of workers to use for parallel processing')
     parser.add_argument('--batch_size', type=int, metavar='INT', required=False, default=1000, help='number of breakpoints to batch for a parallel processing worker job')
@@ -265,7 +265,7 @@ def make_detailed_empty_genotype_result(variant_id, sample_name):
     }
 
 
-def gather_split_read_evidence(sam_fragment, breakpoint, split_slop, min_aligned, reference_fasta=None, clip_context=5, clip_k=8, clip_max_mismatch=2, clip_min_length=3):
+def gather_split_read_evidence(sam_fragment, breakpoint, split_slop, min_aligned, reference_fasta=None, clip_context=5, clip_k=8, clip_max_mismatch=2, clip_min_length=11):
     (ref_seq, alt_seq, alt_clip) = (0, 0, 0)
 
     elems = ('chrom', 'pos', 'ci', 'is_reverse')
@@ -298,7 +298,8 @@ def gather_split_read_evidence(sam_fragment, breakpoint, split_slop, min_aligned
                 alt_clip += p_alt
             else:
                 try:
-                    clip_seq, clip_side = split.get_clipped_sequence()
+                    clip_seq, clip_side = split.get_clipped_sequence(
+                        anchor_positions=[(chromA, posA), (chromB, posB)])
                 except Exception:
                     clip_seq, clip_side = (None, None)
 
@@ -397,7 +398,7 @@ def gather_paired_end_evidence(fragment, breakpoint, min_aligned):
 
     return (ref_span, alt_span, ref_ciA, ref_ciB)
 
-def tally_variant_read_fragments(split_slop, min_aligned, breakpoint, sam_fragments, debug, reference_fasta=None, clip_context=5, clip_k=8, clip_max_mismatch=2, clip_min_length=3):
+def tally_variant_read_fragments(split_slop, min_aligned, breakpoint, sam_fragments, debug, reference_fasta=None, clip_context=5, clip_k=8, clip_max_mismatch=2, clip_min_length=11):
     # initialize counts to zero
     ref_span, alt_span = 0, 0
     ref_seq, alt_seq = 0, 0
@@ -517,7 +518,7 @@ def bayesian_genotype(breakpoint, counts, split_weight, disc_weight, debug):
     
     return result
 
-def serial_calculate_genotype(bam, regions, library_data, active_libs, sample_name, split_slop, min_aligned, split_weight, disc_weight, breakpoint, max_reads, debug, reference_fasta=None, clip_context=5, clip_max_mismatch=2, clip_min_length=3):
+def serial_calculate_genotype(bam, regions, library_data, active_libs, sample_name, split_slop, min_aligned, split_weight, disc_weight, breakpoint, max_reads, debug, reference_fasta=None, clip_context=5, clip_max_mismatch=2, clip_min_length=11):
     (read_batches, many) = gather_reads(bam, breakpoint['id'], regions, library_data, active_libs, max_reads)
 
     # if there are too many reads around the breakpoint
@@ -548,7 +549,7 @@ def serial_calculate_genotype(bam, regions, library_data, active_libs, sample_na
     result = bayesian_genotype(breakpoint, counts, split_weight, disc_weight, debug)
     return { 'variant.id' : breakpoint['id'], 'sample.name' : sample_name, 'genotype' : result }
 
-def parallel_calculate_genotype(alignment_file, reference_fasta, library_data, active_libs, sample_name, split_slop, min_aligned, split_weight, disc_weight, max_reads, debug, batch_breakpoints, batch_regions, batch_number, clip_context=5, clip_max_mismatch=2, clip_min_length=3):
+def parallel_calculate_genotype(alignment_file, reference_fasta, library_data, active_libs, sample_name, split_slop, min_aligned, split_weight, disc_weight, max_reads, debug, batch_breakpoints, batch_regions, batch_number, clip_context=5, clip_max_mismatch=2, clip_min_length=11):
     logit("Starting batch: {}".format(batch_number))
     bam = open_alignment_file(alignment_file, reference_fasta)
 
@@ -629,7 +630,7 @@ def assign_genotype_to_variant(variant, sample, genotype_result):
         variant.genotype(sample.name).set_format('AB',  outcome['formats']['AB'])
     return variant
 
-def genotype_serial(src_vcf, out_vcf, sample, z, split_slop, min_aligned, sum_quals, split_weight, disc_weight, max_reads, max_ci_dist, debug, reference_fasta=None, clip_context=5, clip_max_mismatch=2, clip_min_length=3):
+def genotype_serial(src_vcf, out_vcf, sample, z, split_slop, min_aligned, sum_quals, split_weight, disc_weight, max_reads, max_ci_dist, debug, reference_fasta=None, clip_context=5, clip_max_mismatch=2, clip_min_length=11):
     # initializations
     bnd_cache = {}
     src_vcf.write_header(out_vcf)
@@ -766,7 +767,7 @@ def apply_genotypes_to_vcf(src_vcf, out_vcf, genotypes, sample, sum_quals):
             variant2.genotype = variant.genotype
             variant2.write(out_vcf)
 
-def genotype_parallel(src_vcf, out_vcf, sample, z, split_slop, min_aligned, sum_quals, split_weight, disc_weight, max_reads, max_ci_dist, debug, cores, breakpoint_batch_size, ref_fasta, clip_context=5, clip_max_mismatch=2, clip_min_length=3):
+def genotype_parallel(src_vcf, out_vcf, sample, z, split_slop, min_aligned, sum_quals, split_weight, disc_weight, max_reads, max_ci_dist, debug, cores, breakpoint_batch_size, ref_fasta, clip_context=5, clip_max_mismatch=2, clip_min_length=11):
 
     # cleanup unused library attributes
     for rg in sample.rg_to_lib:
@@ -837,7 +838,7 @@ def sso_genotype(bam_string,
                  batch_size,
                  clip_context=5,
                  clip_max_mismatch=2,
-                 clip_min_length=3):
+                 clip_min_length=11):
 
     # quit early if input VCF is absent
     if vcf_in is None:

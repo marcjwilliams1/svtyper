@@ -135,8 +135,8 @@ description: Compute genotype of structural variants based on breakpoint depth")
                        help='unused (kept for backward CLI compatibility); the clipped-read matcher no longer uses a k-mer prefilter [8]')
     parser.add_argument('--clip_max_mismatch', metavar='INT', type=int, default=2, required=False,
                        help='maximum edit distance allowed for a clipped-read match (requires -T/--ref_fasta) [2]')
-    parser.add_argument('--clip_min_length', metavar='INT', type=int, default=3, required=False,
-                       help='minimum clip length (bp) required before attempting a match; shorter clips are discarded outright since they carry too little sequence information to be matched reliably (requires -T/--ref_fasta) [3]')
+    parser.add_argument('--clip_min_length', metavar='INT', type=int, default=11, required=False,
+                       help='minimum clip length (bp) required before attempting a match; shorter clips are discarded outright since they carry too little sequence information to be matched reliably (requires -T/--ref_fasta) [11]')
     parser.add_argument('--debug', action='store_true', help=argparse.SUPPRESS)
     parser.add_argument('--verbose', action='store_true', default=False, help='Report status updates')
     parser.add_argument('--keep_duplicates', action='store_true', default=False, help='Keep duplicates for read counting (default: True)')
@@ -243,7 +243,7 @@ def sv_genotype(bam_string,
                 clip_context=5,
                 clip_k=8,
                 clip_max_mismatch=2,
-                clip_min_length=3):
+                clip_min_length=11):
 
     # Load cell filter if provided
     allowed_cells = load_cell_filter(cell_filter_file)
@@ -499,7 +499,8 @@ def sv_genotype(bam_string,
                         if ref_fasta is not None:
                             clip_matched = False
                             try:
-                                clip_seq, clip_side = split.get_clipped_sequence()
+                                clip_seq, clip_side = split.get_clipped_sequence(
+                                    anchor_positions=[(chromA, posA), (chromB, posB)])
                             except Exception:
                                 clip_seq, clip_side = (None, None)
                             if clip_seq:

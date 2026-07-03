@@ -1063,30 +1063,67 @@ class SplitRead(object):
     # reference position where the alignment would have started
     # if the entire query sequence would have aligned
 
-    def get_clipped_sequence(self):
-        """Return (clip_seq, side) where side is 'left' or 'right', or (None, None)."""
+    def get_clipped_sequence(self, anchor_positions=None):
+        """Return (clip_seq, side) where side is 'left' or 'right', or (None, None).
+
+        When both ends are clipped (common for short-insert/adapter-readthrough
+        fragments), a single side has to be picked, since only one clip is
+        tested against the breakpoint. Preference order:
+
+        1. If `anchor_positions` is given (an iterable of (chrom, pos) tuples
+           - normally the breakpoint's own reported A/B positions - the side
+           whose alignment edge is geometrically closer to one of those
+           positions wins. The clip nearest the breakpoint is the one that
+           could plausibly represent that junction; the other end, however
+           long, is almost certainly unrelated sequence (adapter readthrough,
+           the overlapping mate, terminal sequencing noise) which just
+           happens to sit at the read's other end.
+        2. Otherwise (no anchor info, or both ends equidistant), fall back to
+           the longer clip: it carries more sequence information and is far
+           less likely to match the reference by chance than a short one.
+
+        Always preferring the left end regardless of position or length (the
+        previous behavior) let short, uninformative, or simply wrong-side
+        clips be tested - and sometimes spuriously matched - while a more
+        diagnostic clip on the right end was never considered.
+        """
         try:
             cigar = self.read.cigar
             qs = self.read.query_sequence
         except Exception:
             return (None, None)
-        if cigar is None or len(cigar) == 0:
+        if cigar is None or len(cigar) == 0 or qs is None:
             return (None, None)
-        # left clip
-        if cigar[0][0] in (4,5):
-            clip_len = cigar[0][1]
-            if qs is None:
-                return (None, None)
-            clip_seq = qs[:clip_len]
-            return (clip_seq, 'left')
-        # right clip
-        if cigar[-1][0] in (4,5):
-            clip_len = cigar[-1][1]
-            if qs is None:
-                return (None, None)
-            clip_seq = qs[-clip_len:]
-            return (clip_seq, 'right')
-        return (None, None)
+
+        left_len = cigar[0][1] if cigar[0][0] in (4, 5) else 0
+        right_len = cigar[-1][1] if cigar[-1][0] in (4, 5) else 0
+
+        if left_len == 0 and right_len == 0:
+            return (None, None)
+        if left_len == 0:
+            return (qs[-right_len:], 'right')
+        if right_len == 0:
+            return (qs[:left_len], 'left')
+
+        # both ends clipped: prefer whichever is closer to a known breakpoint anchor
+        if anchor_positions:
+            try:
+                chrom = self.read.reference_name
+                same_chrom_positions = [pos for c, pos in anchor_positions if c == chrom]
+            except Exception:
+                same_chrom_positions = []
+            if same_chrom_positions:
+                left_anchor = self.read.reference_start
+                right_anchor = self.read.reference_end
+                left_dist = min(abs(left_anchor - pos) for pos in same_chrom_positions)
+                right_dist = min(abs(right_anchor - pos) for pos in same_chrom_positions)
+                if left_dist != right_dist:
+                    return (qs[:left_len], 'left') if left_dist < right_dist else (qs[-right_len:], 'right')
+
+        # no usable anchor info, or tied distance: fall back to the longer clip
+        if right_len > left_len:
+            return (qs[-right_len:], 'right')
+        return (qs[:left_len], 'left')
 
     @staticmethod
     def get_start_diagonal(split_piece):
