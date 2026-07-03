@@ -203,7 +203,7 @@ read_svtyper_matrices <- function(folder){
 - `-l, --lib_info FILE`: Create/read JSON file of library information
 - `--read_names_out`: Output supporting read names to separate file
 - `--keep_duplicates`: Keep duplicate reads for counting (default: False)
-- `--both_sides`: Require reads to align to both sides of breakpoint
+- `--both_sides`: Require reads to align to both sides of breakpoint. Only applies to split-read and spanning-pair evidence — clipped-read evidence (`--clip_read_support`) is inherently single-sided (a clip's "other side" isn't a real alignment), so it's unaffected by this flag and counts the same way regardless of whether `--both_sides` is set.
 - `--max_reads INT`: Maximum reads to assess per variant (default: unlimited)
 - `-m, --min_aligned INT`: Minimum aligned bases for read evidence (default: 20)
 

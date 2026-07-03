@@ -444,7 +444,6 @@ def sv_genotype(bam_string,
             alt_clip = 0
             n_ref_span, n_alt_span = 0, 0
             n_ref_seq, n_alt_seq = 0, 0
-            n_alt_clip = 0
             read_names_split = []
             read_names_clip = []
             read_names_span = []
@@ -521,14 +520,12 @@ def sv_genotype(bam_string,
                         if not clip_matched:
                             continue
                         alt_clip += p_alt
-                        if p_alt > 0.5 and both_sides == True:
-                            n_alt_clip += math.ceil(p_alt)
-                            read_names_clip.append(split.query_name)
-                            if output_cell_ids:
-                                cell_ids_clip.append(get_cell_id(split.read))
-                            split.tag_split(p_alt)
-                            write_fragment = True
-                        elif p_alt > 0 and both_sides == False:
+                        # clip evidence is inherently single-sided (the "other side" of a clip
+                        # is an unmapped placeholder, so p_alt can never exceed 0.5) - --both_sides
+                        # only makes sense for genuine two-sided split/span evidence, so clips are
+                        # always counted here regardless of it, rather than being unconditionally
+                        # zeroed out below
+                        if p_alt > 0:
                             read_names_clip.append(split.query_name)
                             if output_cell_ids:
                                 cell_ids_clip.append(get_cell_id(split.read))
@@ -669,7 +666,6 @@ def sv_genotype(bam_string,
                 print('n_alt_span:', n_alt_span)
                 print('n_ref_seq:', n_ref_seq)
                 print('n_alt_seq:', n_alt_seq)
-                print('n_alt_clip:', n_alt_clip)
 
             # in the absence of evidence for a particular type, ignore the reference
             # support for that type as well
@@ -686,7 +682,8 @@ def sv_genotype(bam_string,
                 alt_clip = 0
             
             if both_sides == True:
-                alt_clip = n_alt_clip
+                # alt_clip intentionally left untouched here: --both_sides gates split/span
+                # evidence, but clip evidence (accumulated above) is never subject to it
                 alt_span = n_alt_span
                 alt_seq = n_alt_seq
             
