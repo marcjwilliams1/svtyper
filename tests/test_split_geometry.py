@@ -99,6 +99,14 @@ class TestSplitGeometry(unittest.TestCase):
         read = FakeRead("chr1", 500, 560, [(0, 60), (4, 20)])
         self.assertFalse(clip_supports("INV", False, False, 100, 200, read))
 
+    def test_inv_clip_free_edge_not_a_false_positive(self):
+        # Right-clip: the real junction is at reference_end=150 (near nothing),
+        # but the arbitrary free edge reference_start=100 sits on posA. The clip
+        # must NOT be counted -- its junction is the clipped (end) edge, not the
+        # free (start) edge.
+        read = FakeRead("chr1", 100, 150, [(0, 50), (4, 30)])
+        self.assertFalse(clip_supports("INV", False, False, 100, 500, read))
+
 
 if __name__ == "__main__":
     unittest.main()
