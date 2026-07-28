@@ -107,6 +107,49 @@ class TestSplitGeometry(unittest.TestCase):
         read = FakeRead("chr1", 100, 150, [(0, 50), (4, 30)])
         self.assertFalse(clip_supports("INV", False, False, 100, 500, read))
 
+    # ---- issue #11: SVTYPE=BND with MATCHING breakend orientations -----------
+    # An inversion-shaped junction is commonly represented as a BND pair whose
+    # two breakends resolve to the SAME inferred orientation (o1_is_reverse ==
+    # o2_is_reverse). Such a junction anchors reads by BOTH reference_end and
+    # reference_start, so both a right-clip and a left-clip landing on a breakend
+    # must be counted -- the pre-fix generic BND branch fed check_split_support a
+    # single fixed is_reverse and silently dropped every read on the coordinate
+    # it never evaluated.
+    def test_bnd_both_reverse_right_clip_reference_end_posA(self):
+        read = FakeRead("chr1", 50, 100, [(0, 50), (4, 30)])   # reference_end=100
+        self.assertTrue(clip_supports("BND", True, True, 100, 200, read))
+
+    def test_bnd_both_reverse_right_clip_reference_end_posB(self):
+        read = FakeRead("chr1", 150, 200, [(0, 50), (4, 30)])  # reference_end=200
+        self.assertTrue(clip_supports("BND", True, True, 100, 200, read))
+
+    def test_bnd_both_reverse_left_clip_reference_start_posA(self):
+        read = FakeRead("chr1", 100, 150, [(4, 30), (0, 50)])  # reference_start=100
+        self.assertTrue(clip_supports("BND", True, True, 100, 200, read))
+
+    def test_bnd_both_reverse_left_clip_reference_start_posB(self):
+        read = FakeRead("chr1", 200, 250, [(4, 30), (0, 50)])  # reference_start=200
+        self.assertTrue(clip_supports("BND", True, True, 100, 200, read))
+
+    def test_bnd_both_forward_right_clip_reference_end_posA(self):
+        read = FakeRead("chr1", 50, 100, [(0, 50), (4, 30)])   # reference_end=100
+        self.assertTrue(clip_supports("BND", False, False, 100, 200, read))
+
+    def test_bnd_both_forward_left_clip_reference_start_posB(self):
+        read = FakeRead("chr1", 200, 250, [(4, 30), (0, 50)])  # reference_start=200
+        self.assertTrue(clip_supports("BND", False, False, 100, 200, read))
+
+    def test_bnd_matching_orientation_clip_far_not_supported(self):
+        read = FakeRead("chr1", 500, 560, [(0, 60), (4, 20)])
+        self.assertFalse(clip_supports("BND", True, True, 100, 200, read))
+
+    def test_bnd_matching_orientation_clip_free_edge_not_a_false_positive(self):
+        # Same free-edge guard as INV: right-clip's real junction is at
+        # reference_end=150 (near nothing); its free reference_start=100 sits on
+        # posA but must not be counted.
+        read = FakeRead("chr1", 100, 150, [(0, 50), (4, 30)])
+        self.assertFalse(clip_supports("BND", True, True, 100, 500, read))
+
 
 if __name__ == "__main__":
     unittest.main()

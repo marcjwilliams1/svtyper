@@ -1271,62 +1271,90 @@ class SplitRead(object):
             # by reference_end at a breakend, the other's by reference_start.
             # Modeling INV with a single orientation (o1=o2=False) tests only
             # reference_end and silently misses ~half the evidence (the whole
-            # reference_start-anchored junction). BND does not need special
-            # handling here because its per-end orientation is inferred from the
-            # alt allele and is definite.
-            if self.is_soft_clip:
-                # A soft-clip's anchor orientation is fixed by its clip side
-                # (right-clip -> reference_end, left-clip -> reference_start): the
-                # clipped edge IS the junction, the other edge is an arbitrary
-                # alignment boundary. Test only that clip-side anchor against both
-                # breakends. Testing both orientations here would give the
-                # arbitrary free edge a spurious second chance to land on a
-                # breakend (a real false positive for INV clips; verified with a
-                # fake-read harness). SA-tag splits below have no such free edge.
-                left_clipped = self.is_left_clip(self.read.cigar)
-                real = self.query_right if left_clipped else self.query_left
-                is_rev = left_clipped
-                support = (self.check_split_support(real, chrom_left, pos_left, is_rev, split_slop)
-                           or self.check_split_support(real, chrom_right, pos_right, is_rev, split_slop))
-                # place support in the slot holding the real (non-dummy) piece
-                left_split, right_split = (False, support) if left_clipped else (support, False)
-            else:
-                # Genuine SA-tag split: two real alignments meeting at a directly
-                # observed junction (no arbitrary free edge), so test each piece
-                # against each breakend in BOTH orientations to catch either
-                # inversion junction.
-                def _anchor_near(piece, chrom, pos):
-                    return (self.check_split_support(piece, chrom, pos, False, split_slop)
-                            or self.check_split_support(piece, chrom, pos, True, split_slop))
-                left_split = (_anchor_near(self.query_left, chrom_left, pos_left)
-                              or _anchor_near(self.query_left, chrom_right, pos_right))
-                right_split = (_anchor_near(self.query_right, chrom_left, pos_left)
-                               or _anchor_near(self.query_right, chrom_right, pos_right))
+            # reference_start-anchored junction).
+            left_split, right_split = self.straddle_matching_orientation(
+                    chrom_left, pos_left, chrom_right, pos_right, split_slop)
         elif svtype == 'BND':
-                # check all possible sides
-            left_split_left = self.check_split_support(self.query_left,
-                    chrom_left,
-                    pos_left,
-                    is_reverse_left,
-                    split_slop)
-            left_split_right = self.check_split_support(self.query_left,
-                    chrom_right,
-                    pos_right,
-                    is_reverse_right,
-                    split_slop)
-            left_split = left_split_left or left_split_right
-            right_split_left = self.check_split_support(self.query_right,
-                    chrom_left,
-                    pos_left,
-                    is_reverse_left,
-                    split_slop)
-            right_split_right = self.check_split_support(self.query_right,
-                    chrom_right,
-                    pos_right,
-                    is_reverse_right,
-                    split_slop)
-            right_split = right_split_left or right_split_right
+            if o1_is_reverse == o2_is_reverse:
+                # Both breakends resolve to the SAME inferred orientation -- an
+                # inversion-shaped junction (a spec-compliant, common way to
+                # represent an inversion as a BND pair). The all-sides check in
+                # the else-branch would hand check_split_support the same
+                # is_reverse for both ends and therefore only ever evaluate ONE
+                # of reference_start/reference_end, silently dropping every
+                # split/clip read whose informative boundary is the coordinate
+                # never tested (issue #11). Use the same both-anchor geometry as
+                # INV, which is exactly the "single inferred orientation"
+                # situation.
+                left_split, right_split = self.straddle_matching_orientation(
+                        chrom_left, pos_left, chrom_right, pos_right, split_slop)
+            else:
+                # Mixed orientation (DEL/DUP-shaped BND): each end's orientation
+                # is definite and distinct, so the all-sides check already
+                # exercises both reference_start and reference_end across the two
+                # breakends. Check all possible sides.
+                left_split_left = self.check_split_support(self.query_left,
+                        chrom_left,
+                        pos_left,
+                        is_reverse_left,
+                        split_slop)
+                left_split_right = self.check_split_support(self.query_left,
+                        chrom_right,
+                        pos_right,
+                        is_reverse_right,
+                        split_slop)
+                left_split = left_split_left or left_split_right
+                right_split_left = self.check_split_support(self.query_right,
+                        chrom_left,
+                        pos_left,
+                        is_reverse_left,
+                        split_slop)
+                right_split_right = self.check_split_support(self.query_right,
+                        chrom_right,
+                        pos_right,
+                        is_reverse_right,
+                        split_slop)
+                right_split = right_split_left or right_split_right
 
+        return (left_split, right_split)
+
+    def straddle_matching_orientation(self, chrom_left, pos_left,
+                                      chrom_right, pos_right, split_slop):
+        '''
+        Split/clip geometry for a junction whose two breakends share the same
+        inferred orientation (an inversion-shaped junction). Such a junction
+        anchors supporting reads by BOTH reference_end and reference_start, so a
+        single fixed is_reverse flag -- which is all check_split_support derives
+        from a breakend's orientation -- would only ever test one coordinate and
+        silently drop every read anchored on the other. Shared by SVTYPE=INV and
+        by SVTYPE=BND pairs with o1_is_reverse == o2_is_reverse (issue #11).
+        '''
+        if self.is_soft_clip:
+            # A soft-clip's anchor orientation is fixed by its clip side
+            # (right-clip -> reference_end, left-clip -> reference_start): the
+            # clipped edge IS the junction, the other edge is an arbitrary
+            # alignment boundary. Test only that clip-side anchor against both
+            # breakends. Testing both orientations here would give the arbitrary
+            # free edge a spurious second chance to land on a breakend (a real
+            # false positive for inversion-shaped clips; verified with a
+            # fake-read harness). SA-tag splits below have no such free edge.
+            left_clipped = self.is_left_clip(self.read.cigar)
+            real = self.query_right if left_clipped else self.query_left
+            is_rev = left_clipped
+            support = (self.check_split_support(real, chrom_left, pos_left, is_rev, split_slop)
+                       or self.check_split_support(real, chrom_right, pos_right, is_rev, split_slop))
+            # place support in the slot holding the real (non-dummy) piece
+            return (False, support) if left_clipped else (support, False)
+        # Genuine SA-tag split: two real alignments meeting at a directly
+        # observed junction (no arbitrary free edge), so test each piece against
+        # each breakend in BOTH orientations to catch either inversion junction.
+        def _anchor_near(piece, chrom, pos):
+            return (self.check_split_support(piece, chrom, pos, False, split_slop)
+                    or self.check_split_support(piece, chrom, pos, True, split_slop))
+        left_split = (_anchor_near(self.query_left, chrom_left, pos_left)
+                      or _anchor_near(self.query_left, chrom_right, pos_right))
+        right_split = (_anchor_near(self.query_right, chrom_left, pos_left)
+                       or _anchor_near(self.query_right, chrom_right, pos_right))
         return (left_split, right_split)
 
     # tag the read with R (ref), A (alt), or U (unknown) XV tag
