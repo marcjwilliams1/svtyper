@@ -53,7 +53,6 @@ description: Compute genotype of structural variants based on breakpoint depth o
     return args
 
 def ensure_valid_alignment_file(afile):
-    print(afile.__class__.__name__, file=sys.stderr)
     if not isinstance(afile, str):
         afile = afile.decode()
 
@@ -191,7 +190,7 @@ def is_over_threshold(bam, variant_id, regions, max_reads):
     over_threshold = False
     (regionA, regionB) = regions
     (countA, countB) = ( count_reads_in_region(regionA, bam), count_reads_in_region(regionB, bam) )
-    if countA > max_reads or countB > max_reads:
+    if max_reads is not None and (countA > max_reads or countB > max_reads):
         over_threshold = True
         msg = ("SKIPPING -- Variant '{}' has a region with too many reads (> {})\n"
                 "\t\t A: (sample={} chrom={} center={} leftflank={} rightflank={}) : {}\n"

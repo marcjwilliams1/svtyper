@@ -139,7 +139,7 @@ description: Compute genotype of structural variants based on breakpoint depth")
                        help='minimum clip length (bp) required before attempting a match; shorter clips are discarded outright since they carry too little sequence information to be matched reliably (requires -T/--ref_fasta) [11]')
     parser.add_argument('--debug', action='store_true', help=argparse.SUPPRESS)
     parser.add_argument('--verbose', action='store_true', default=False, help='Report status updates')
-    parser.add_argument('--keep_duplicates', action='store_true', default=False, help='Keep duplicates for read counting (default: True)')
+    parser.add_argument('--keep_duplicates', action='store_true', default=False, help='Keep duplicates for read counting (default: False)')
     parser.add_argument('--both_sides', action='store_true', default=False, help='Reads must align to both sides of the breakpoint to be counted, default is false meaning if one side matches this is 1/2 a count, clipped reads will be 0 if set to True')
 
 
@@ -228,15 +228,15 @@ def sv_genotype(bam_string,
                 num_samp,
                 lib_info_path,
                 debug,
-                clip_read_support,
-                keep_duplicates,
-                alignment_outpath,
-                ref_fasta,
-                sum_quals,
-                max_reads,
-                max_ci_dist,
-                read_names_out,
-                both_sides,
+                clip_read_support=False,
+                keep_duplicates=False,
+                alignment_outpath=None,
+                ref_fasta=None,
+                sum_quals=False,
+                max_reads=None,
+                max_ci_dist=1e10,
+                read_names_out=False,
+                both_sides=False,
                 output_cell_ids=False,
                 cell_filter_file=None,
                 output_matrices=False,
