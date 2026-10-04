@@ -141,6 +141,7 @@ description: Compute genotype of structural variants based on breakpoint depth")
     parser.add_argument('--verbose', action='store_true', default=False, help='Report status updates')
     parser.add_argument('--keep_duplicates', action='store_true', default=False, help='Keep duplicates for read counting (default: False)')
     parser.add_argument('--both_sides', action='store_true', default=False, help='Reads must align to both sides of the breakpoint to be counted, default is false meaning if one side matches this is 1/2 a count, clipped reads will be 0 if set to True')
+    parser.add_argument('--keep_all_ref', action='store_true', default=False, help='Always report both reference split reads (RS) and reference pairs (RP). By default, if the alternate evidence is only pairs, RS is set to 0, and if it is only split/clipped reads, RP is set to 0 (and the absent alternate type is zeroed). That suits germline genotyping but inflates low allele fractions, e.g. ctDNA')
 
 
     # parse the arguments
@@ -243,7 +244,8 @@ def sv_genotype(bam_string,
                 clip_context=5,
                 clip_k=8,
                 clip_max_mismatch=2,
-                clip_min_length=11):
+                clip_min_length=11,
+                keep_all_ref=False):
 
     # Load cell filter if provided
     allowed_cells = load_cell_filter(cell_filter_file)
@@ -668,14 +670,18 @@ def sv_genotype(bam_string,
                 print('n_alt_seq:', n_alt_seq)
 
             # in the absence of evidence for a particular type, ignore the reference
-            # support for that type as well
-            if (alt_seq + alt_clip) < 0.5 and alt_span >= 1:
-                alt_seq = 0
-                alt_clip = 0
-                ref_seq = 0
-            if alt_span < 0.5 and (alt_seq + alt_clip) >= 1:
-                alt_span = 0
-                ref_span = 0
+            # support for that type as well. --keep_all_ref skips this: at low allele
+            # fraction a few alt reads of one type by chance would otherwise drop the
+            # other type's reference reads and inflate AO / DP. Note the test uses the
+            # fractional sums, before --both_sides discards one-sided evidence below.
+            if not keep_all_ref:
+                if (alt_seq + alt_clip) < 0.5 and alt_span >= 1:
+                    alt_seq = 0
+                    alt_clip = 0
+                    ref_seq = 0
+                if alt_span < 0.5 and (alt_seq + alt_clip) >= 1:
+                    alt_span = 0
+                    ref_span = 0
 
             if alt_span < 0.5 and alt_seq < 0.5 and alt_clip > 0 and clip_read_support == False:
                 # discount any SV that's only supported by clips if clip_read_support == False
@@ -869,7 +875,8 @@ def main():
                 args.clip_context,
                 args.clip_k,
                 args.clip_max_mismatch,
-                args.clip_min_length)
+                args.clip_min_length,
+                args.keep_all_ref)
 
 # --------------------------------------
 # command-line/console entrypoint

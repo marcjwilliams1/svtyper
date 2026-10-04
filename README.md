@@ -205,6 +205,7 @@ read_svtyper_matrices <- function(folder){
 - `--keep_duplicates`: Keep duplicate reads for counting (default: False)
 - `--both_sides`: Require reads to align to both sides of breakpoint. Only applies to split-read and spanning-pair evidence — clipped-read evidence (`--clip_read_support`) is inherently single-sided (a clip's "other side" isn't a real alignment), so it's unaffected by this flag and counts the same way regardless of whether `--both_sides` is set.
 - `--max_reads INT`: Maximum reads to assess per variant (default: unlimited)
+- `--keep_all_ref`: Always report both reference split reads (RS) and reference pairs (RP). By default svtyper keeps only the reference type matching the alternate evidence it found: alternate support from pairs only sets RS to 0, and from split/clipped reads only sets RP to 0. That suits germline genotyping, but at low allele fraction (e.g. ctDNA) a few alternate reads of one type by chance drop the other reference type and inflate AO / DP. The decision uses fractional evidence before `--both_sides` filtering, so one-sided split reads that `--both_sides` later discards can still trigger it. Alternate counts are unchanged; genotype likelihoods use the larger reference counts.
 - `-m, --min_aligned INT`: Minimum aligned bases for read evidence (default: 20)
 
 ### Clipped-Read Matching Options
@@ -253,7 +254,8 @@ with open(input_vcf, "r") as inf, open(output_vcf, "w") as outf:
         output_matrices=True,  # New: output count matrices
         clip_context=5,          # clipped-read matching: anchor search radius (bp)
         clip_max_mismatch=2,     # clipped-read matching: max edit distance ceiling
-        clip_min_length=11       # clipped-read matching: minimum clip length (bp)
+        clip_min_length=11,      # clipped-read matching: minimum clip length (bp)
+        keep_all_ref=False       # True: never zero RS/RP by alternate evidence type
     )
 ```
 
