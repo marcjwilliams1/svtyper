@@ -53,6 +53,7 @@ When a reference FASTA is supplied (`-T/--ref_fasta`) together with `--clip_read
 - The allowed edit distance automatically scales down for short clips (see `--clip_max_mismatch`), and clips shorter than `--clip_min_length` are discarded outright, since very short clips (1-2bp) carry too little sequence information to be matched reliably — an "exact" match at that length is expected to occur by chance.
 - This is deliberately conservative: a clipped read that doesn't match the reference at its breakpoint is **not** counted as support, even though it would have been counted without `-T/--ref_fasta`.
 - See `--clip_context`, `--clip_max_mismatch`, and `--clip_min_length` under [Command Line Options](#command-line-options) below.
+- Optionally (`--clip_partner_match`), clips are matched orientation-aware: only against the sequence the junction adds from the partner breakend, only on the junction side of the breakend the read sits at, and only if closer to that than to the read's own reference. The default matcher also accepts reads clipped for unrelated reasons (sequencing errors near a read end, homopolymer slippage) whose clip is just the local reference; on targeted cfDNA data these were the scattered false clips in control samples, while true junction clips all passed. `--clip_min_base_quality` additionally drops clips whose clipped bases have low mean quality, mostly an issue in uncollapsed (non-consensus) reads.
 
 ## Example Usage
 
@@ -216,6 +217,8 @@ These only take effect when both `--clip_read_support` and `-T/--ref_fasta` are 
 - `--clip_max_mismatch INT`: ceiling on the edit distance allowed for a clipped-read match. The actual tolerance used is scaled down for short clips (roughly 1 mismatch per 7bp), capped at this value — e.g. a 3-6bp clip requires an exact match regardless of this setting. Default: `2`.
 - `--clip_min_length INT`: minimum clip length (bp) required before a match is even attempted; shorter clips are discarded outright since they carry too little sequence information to be matched reliably. Default: `11`, benchmarked to remove >99.99% of false-positive off-target clip support (value of 3 will remove ~99.7%) with minimal loss of true-positive signal; any residual errors are likely from challenging SVs (e.g. in repetitive regions) better handled by filtering upstream.
 - `--clip_k INT`: unused (kept only for backward CLI compatibility with earlier versions; the matcher no longer uses a k-mer prefilter). Default: `8`.
+- `--clip_partner_match`: orientation-aware matching. A clip counts only if (1) its clipped edge is within `--clip_context` bp of a breakend on the read's chromosome; (2) it is on that breakend's junction side (a breakend whose sequence is kept to its left - ALT `t[p[` / `t]p]` - needs a right clip, one kept to its right a left clip; an INV record stands for both junctions, so either side); (3) read away from the junction, it is within the scaled `--clip_max_mismatch` of the partner breakend's junction sequence; and (4) it is strictly closer to that than to the read's own reference continuation past the clip point, so clips at junctions whose partner sequence resembles the local reference (homology) don't count. Off by default; the default matcher is unchanged.
+- `--clip_min_base_quality INT`: minimum mean base quality of the clipped bases. Applies with or without `-T`. Default: `0` (off).
 
 ## Python Library Usage
 
@@ -255,6 +258,8 @@ with open(input_vcf, "r") as inf, open(output_vcf, "w") as outf:
         clip_context=5,          # clipped-read matching: anchor search radius (bp)
         clip_max_mismatch=2,     # clipped-read matching: max edit distance ceiling
         clip_min_length=11,      # clipped-read matching: minimum clip length (bp)
+        clip_partner_match=False,  # orientation-aware clip matching against the partner breakend
+        clip_min_base_quality=0,   # minimum mean base quality of clipped bases (0 = off)
         keep_all_ref=False       # True: never zero RS/RP by alternate evidence type
     )
 ```
@@ -288,7 +293,7 @@ svtyper-sso \
     -o sv.gt.vcf
 ```
 
-**Note**: `svtyper-sso` does not yet support the new single-cell features. It also does not have a separate `--clip_read_support` flag: clipped-read matching activates automatically whenever `-T/--ref_fasta` is supplied, using the same `--clip_context`/`--clip_max_mismatch`/`--clip_min_length` options as `svtyper` (see [Clipped-Read Matching Options](#clipped-read-matching-options)).
+**Note**: `svtyper-sso` does not yet support the new single-cell features. It also does not have a separate `--clip_read_support` flag: clipped-read matching activates automatically whenever `-T/--ref_fasta` is supplied, using the same `--clip_context`/`--clip_max_mismatch`/`--clip_min_length` options as `svtyper` (see [Clipped-Read Matching Options](#clipped-read-matching-options)). `--clip_partner_match` and `--clip_min_base_quality` are `svtyper` only for now.
 
 ## Development
 

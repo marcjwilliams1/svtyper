@@ -172,3 +172,120 @@ def match_clip_to_breakpoint_windows(clip_seq, ref_fasta_path, breakpoint, conte
 
     fasta.close()
     return (False, None, None, None)
+
+
+def clip_quality_ok(read, clip_side, min_quality):
+    """True if the soft-clipped bases on `clip_side` ('left' / 'right') have mean base
+    quality >= `min_quality`. Reads without base qualities, or without soft-clipped
+    bases on that side (e.g. hard clips, whose bases aren't in the record), pass:
+    there's nothing to judge."""
+    quals = read.query_qualities
+    cigar = read.cigartuples
+    if quals is None or not cigar or clip_side not in ('left', 'right'):
+        return True
+    op, n = cigar[-1] if clip_side == 'right' else cigar[0]
+    if op != 4 or n == 0:
+        return True
+    clipped = quals[len(quals) - n:] if clip_side == 'right' else quals[:n]
+    return sum(clipped) / float(n) >= min_quality
+
+
+def partner_junction_sequence(fasta, chrom, pos0, partner_is_reverse, length):
+    """Sequence a junction adds next to the clip point, read away from the junction.
+
+    `pos0` is the partner breakend's 0-based position. A reverse partner keeps the
+    sequence from `pos0` onward; a forward partner keeps the sequence up to and
+    including `pos0`, which the junction joins inverted. The result does not
+    depend on which side of the read the clip is on, as long as the clip is also
+    read away from the junction (see match_clip_to_partner)."""
+    if partner_is_reverse:
+        return fasta.fetch(chrom, max(0, pos0), pos0 + length).upper()
+    return revcomp(fasta.fetch(chrom, max(0, pos0 + 1 - length), pos0 + 1).upper())
+
+
+def match_clip_to_partner(clip_seq, clip_side, read_chrom, clip_edge, ref_fasta_path, breakpoint,
+                          context=5, max_mismatch=2, min_clip_length=11):
+    """
+    Orientation-aware alternative to match_clip_to_breakpoint_windows.
+
+    match_clip_to_breakpoint_windows accepts a clip that matches the reference on
+    either side of an anchor near either breakend, in either orientation. That also
+    accepts reads clipped for unrelated reasons (sequencing errors near a read end,
+    homopolymer slippage) whose clip is simply the read's OWN reference continuation,
+    and it can't tell a junction from local homology. Here a clip supports the SV only
+    if all of these hold:
+
+      1. the clip edge (`clip_edge`: reference_end for a right clip, reference_start
+         for a left clip, 0-based) is within `context` bp of a breakend on the read's
+         chromosome - the read's own breakend;
+      2. the clip is on that breakend's junction side: a forward breakend
+         (is_reverse False, sequence kept to its left) needs a right clip, a reverse
+         one a left clip. An INV record stands for two junctions of opposite
+         orientation, so either side is allowed and the partner takes the same
+         orientation as the read's own end;
+      3. the clip, read away from the junction, is within the (length-scaled)
+         mismatch allowance of the PARTNER breakend's junction sequence, at some
+         anchor within +-`context` of the partner's position;
+      4. it is strictly closer to that partner sequence than to the read's own
+         reference continuation past the clip point. Where the two are the same
+         (junction homology), the clip carries no information and is rejected.
+
+    Returns (matched, partner_distance, own_reference_distance, own_side).
+    """
+    if not clip_seq or clip_side not in ('left', 'right') or len(clip_seq) < min_clip_length:
+        return (False, None, None, None)
+    clip_u = clip_seq.upper()
+    L = len(clip_u)
+    maxd = effective_max_mismatch(L, max_mismatch)
+    right = clip_side == 'right'
+    away = clip_u if right else revcomp(clip_u)
+
+    candidates = []
+    for side, other in (('A', 'B'), ('B', 'A')):
+        info = breakpoint.get(side)
+        if info and info['chrom'] == read_chrom and abs(clip_edge - int(info['pos'])) <= context:
+            candidates.append((abs(clip_edge - int(info['pos'])), side, other))
+    if not candidates:
+        return (False, None, None, None)
+    _, own_side, partner_side = min(candidates)
+    own, partner = breakpoint[own_side], breakpoint.get(partner_side)
+    if not partner:
+        return (False, None, None, own_side)
+
+    svtype = breakpoint.get('svtype')
+    own_is_reverse = not right
+    if svtype == 'INV':
+        partner_is_reverse = own_is_reverse
+    else:
+        if bool(own['is_reverse']) != own_is_reverse:
+            return (False, None, None, own_side)
+        partner_is_reverse = bool(partner['is_reverse'])
+
+    try:
+        fasta = pysam.FastaFile(ref_fasta_path)
+    except Exception:
+        return (False, None, None, own_side)
+    try:
+        if right:
+            own_cont = fasta.fetch(read_chrom, clip_edge, clip_edge + L).upper()
+        else:
+            own_cont = revcomp(fasta.fetch(read_chrom, max(0, clip_edge - L), clip_edge).upper())
+        d_own = edit_distance_max(away, own_cont, L)
+        best = None
+        ppos0 = int(partner['pos']) - 1
+        for offset in range(-context, context + 1):
+            seq = partner_junction_sequence(fasta, partner['chrom'], ppos0 + offset, partner_is_reverse, L)
+            if len(seq) != L:
+                continue
+            d = edit_distance_max(away, seq, maxd)
+            if best is None or d < best:
+                best = d
+            if best == 0:
+                break
+    except Exception:
+        fasta.close()
+        return (False, None, None, own_side)
+    fasta.close()
+    if best is None:
+        return (False, None, d_own, own_side)
+    return (best <= maxd and best < d_own, best, d_own, own_side)
