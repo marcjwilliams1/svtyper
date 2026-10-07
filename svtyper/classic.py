@@ -137,6 +137,10 @@ description: Compute genotype of structural variants based on breakpoint depth")
                        help='maximum edit distance allowed for a clipped-read match (requires -T/--ref_fasta) [2]')
     parser.add_argument('--clip_min_length', metavar='INT', type=int, default=11, required=False,
                        help='minimum clip length (bp) required before attempting a match; shorter clips are discarded outright since they carry too little sequence information to be matched reliably (requires -T/--ref_fasta) [11]')
+    parser.add_argument('--clip_partner_match', action='store_true', default=False,
+                       help='orientation-aware clip matching: count a clipped read only if its clip is on the junction side of the breakend it sits at, matches the PARTNER breakend\'s junction sequence, and is closer to it than to the read\'s own reference continuation. Rejects reads clipped for unrelated reasons (end errors, homopolymer slippage) whose clip is just local reference, and clips at junctions with homology (requires -T/--ref_fasta) [off]')
+    parser.add_argument('--clip_min_base_quality', metavar='INT', type=int, default=0, required=False,
+                       help='minimum mean base quality of the clipped bases for a clipped read to be counted; low-quality clips are often sequencing errors that made the aligner soft-clip [0 = off]')
     parser.add_argument('--debug', action='store_true', help=argparse.SUPPRESS)
     parser.add_argument('--verbose', action='store_true', default=False, help='Report status updates')
     parser.add_argument('--keep_duplicates', action='store_true', default=False, help='Keep duplicates for read counting (default: False)')
@@ -245,7 +249,9 @@ def sv_genotype(bam_string,
                 clip_k=8,
                 clip_max_mismatch=2,
                 clip_min_length=11,
-                keep_all_ref=False):
+                keep_all_ref=False,
+                clip_partner_match=False,
+                clip_min_base_quality=0):
 
     # Load cell filter if provided
     allowed_cells = load_cell_filter(cell_filter_file)
@@ -497,6 +503,11 @@ def sv_genotype(bam_string,
                         # attempt to match clipped sequence to breakpoint windows when a reference fasta is
                         # supplied; conservative: unmatched clips are not counted when a reference is given
                         clip_matched = True
+                        if clip_min_base_quality > 0:
+                            from svtyper.clipmatcher import clip_quality_ok
+                            _, q_side = split.get_clipped_sequence(anchor_positions=[(chromA, posA), (chromB, posB)])
+                            if not clip_quality_ok(split.read, q_side, clip_min_base_quality):
+                                continue
                         if ref_fasta is not None:
                             clip_matched = False
                             try:
@@ -512,11 +523,20 @@ def sv_genotype(bam_string,
                                         'B': {'chrom': chromB, 'pos': posB, 'ci': ciB, 'is_reverse': o2_is_reverse},
                                         'svtype': svtype,
                                     }
-                                    clip_matched, clip_dist, clip_matched_side, clip_orientation = \
-                                        match_clip_to_breakpoint_windows(clip_seq, ref_fasta, breakpoint,
-                                                                          context=clip_context, k=clip_k,
-                                                                          max_mismatch=clip_max_mismatch,
-                                                                          min_clip_length=clip_min_length)
+                                    if clip_partner_match:
+                                        from svtyper.clipmatcher import match_clip_to_partner
+                                        clip_edge = (split.read.reference_end if clip_side == 'right'
+                                                     else split.read.reference_start)
+                                        clip_matched = match_clip_to_partner(
+                                            clip_seq, clip_side, split.read.reference_name, clip_edge,
+                                            ref_fasta, breakpoint, context=clip_context,
+                                            max_mismatch=clip_max_mismatch, min_clip_length=clip_min_length)[0]
+                                    else:
+                                        clip_matched, clip_dist, clip_matched_side, clip_orientation = \
+                                            match_clip_to_breakpoint_windows(clip_seq, ref_fasta, breakpoint,
+                                                                              context=clip_context, k=clip_k,
+                                                                              max_mismatch=clip_max_mismatch,
+                                                                              min_clip_length=clip_min_length)
                                 except Exception:
                                     clip_matched = False
                         if not clip_matched:
@@ -876,7 +896,9 @@ def main():
                 args.clip_k,
                 args.clip_max_mismatch,
                 args.clip_min_length,
-                args.keep_all_ref)
+                args.keep_all_ref,
+                args.clip_partner_match,
+                args.clip_min_base_quality)
 
 # --------------------------------------
 # command-line/console entrypoint
