@@ -115,7 +115,8 @@ class TestClipQuality(unittest.TestCase):
 
 class TestClipOptionsOnFixture(unittest.TestCase):
     """svtyper on tests/data/clipmatch (see its README): sv1 a real junction, sv2 clips
-    that are just the reads' own reference, sv3 low-quality clips."""
+    that are just the reads' own reference, sv3 low-quality clips. Also covers
+    --fragment_counts / --genotype_on_fragments."""
 
     def counts(self, **opts):
         with tempfile.TemporaryDirectory() as tmp:
@@ -133,25 +134,54 @@ class TestClipOptionsOnFixture(unittest.TestCase):
                 continue
             t = line.split("\t")
             fmt = dict(zip(t[8].split(":"), t[-1].split(":")))
-            res[t[2].rsplit("_", 1)[0]] = {k: int(fmt[k]) for k in ("AS", "ASC", "AP")}
+            res[t[2].rsplit("_", 1)[0]] = {k: (fmt[k] if k == "GT" else int(fmt[k])) for k in fmt
+                                          if k in ("GT", "AS", "ASC", "AP", "QA", "QR", "FS", "FP",
+                                                   "FC", "AOF", "ROF", "FX")}
         return res
+
+    @staticmethod
+    def pick(d, *keys):
+        return {k: d[k] for k in keys}
 
     def test_default_matcher(self):
         c = self.counts()
-        self.assertEqual(c["sv1"], {"AS": 8, "ASC": 6, "AP": 11})
+        self.assertEqual(self.pick(c["sv1"], "AS", "ASC", "AP"), {"AS": 8, "ASC": 6, "AP": 11})
         self.assertGreater(c["sv2"]["ASC"], 0)
         self.assertGreater(c["sv3"]["ASC"], 0)
 
     def test_partner_match_keeps_junction_drops_own_reference_clips(self):
         c = self.counts(clip_partner_match=True)
-        self.assertEqual(c["sv1"], {"AS": 8, "ASC": 6, "AP": 11})
+        self.assertEqual(self.pick(c["sv1"], "AS", "ASC", "AP"), {"AS": 8, "ASC": 6, "AP": 11})
         self.assertEqual(c["sv2"]["ASC"], 0)
 
     def test_min_base_quality_drops_low_quality_clips(self):
         c = self.counts(clip_min_base_quality=30)
-        self.assertEqual(c["sv1"], {"AS": 8, "ASC": 6, "AP": 11})
+        self.assertEqual(self.pick(c["sv1"], "AS", "ASC", "AP"), {"AS": 8, "ASC": 6, "AP": 11})
         self.assertEqual(c["sv3"]["ASC"], 0)
         self.assertGreater(c["sv2"]["ASC"], 0)
+
+    def test_default_output_has_no_fragment_fields(self):
+        self.assertNotIn("AOF", self.counts()["sv1"])
+
+    def test_fragment_counts(self):
+        c = self.counts(fragment_counts=True)
+        # sv1: 25 alternate reads (AS + ASC + AP) are 19 fragments, each counted once by its
+        # strongest evidence; none carries reference evidence
+        self.assertEqual(self.pick(c["sv1"], "FS", "FP", "FC", "AOF", "ROF", "FX"),
+                         {"FS": 8, "FP": 7, "FC": 4, "AOF": 19, "ROF": 6, "FX": 0})
+        # sv2 / sv3: every "clip" fragment also has reference evidence, so counts as reference
+        for sv in ("sv2", "sv3"):
+            self.assertEqual(c[sv]["AOF"], 0)
+            self.assertEqual(c[sv]["FX"], 9)
+            self.assertGreater(c[sv]["ASC"], 0)          # read-level counts are unchanged
+
+    def test_genotype_on_fragments(self):
+        c = self.counts(genotype_on_fragments=True)
+        for sv in ("sv1", "sv2", "sv3"):
+            self.assertEqual((c[sv]["QA"], c[sv]["QR"]), (c[sv]["AOF"], c[sv]["ROF"]))
+        self.assertEqual(c["sv1"]["GT"], "1/1")
+        self.assertEqual(c["sv2"]["GT"], "0/0")
+        self.assertEqual(c["sv3"]["GT"], "0/0")
 
 
 if __name__ == "__main__":
