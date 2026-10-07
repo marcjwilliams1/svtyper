@@ -162,6 +162,40 @@ class TestIntegration(unittest.TestCase):
                     "output vcf '{}'").format(out_vcf, expected_out_vcf)
         self.assertTrue(self.diff(), fail_msg)
 
+    def _counts(self, keep_all_ref):
+        """Run sv_genotype on the example data (--both_sides) and return
+        {variant id: {field: int}} for the reference/alternate count fields."""
+        with open(in_vcf, "r") as inf, open(out_vcf, "w") as outf:
+            classic.sv_genotype(bam_string=in_bam, vcf_in=inf, vcf_out=outf, min_aligned=20,
+                                split_weight=1, disc_weight=1, num_samp=1000000,
+                                lib_info_path=lib_info_json, debug=False, both_sides=True,
+                                clip_read_support=True, keep_all_ref=keep_all_ref)
+        counts = {}
+        with open(out_vcf) as f:
+            for line in f:
+                if line.startswith("#"):
+                    continue
+                t = line.rstrip("\n").split("\t")
+                fmt = dict(zip(t[8].split(":"), t[-1].split(":")))
+                counts[t[2]] = {k: int(fmt[k]) for k in ("RS", "RP", "AS", "ASC", "AP") if fmt.get(k, ".") != "."}
+        return counts
+
+    def test_keep_all_ref(self):
+        default = self._counts(keep_all_ref=False)
+        kept = self._counts(keep_all_ref=True)
+        self.assertEqual(set(default), set(kept))
+        changed = 0
+        for vid in default:
+            d, k = default[vid], kept[vid]
+            for f in ("RS", "RP"):
+                # turning the rule off can only restore reference reads
+                self.assertGreaterEqual(k.get(f, 0), d.get(f, 0), "%s %s" % (vid, f))
+            for f in ("AS", "ASC", "AP"):
+                # under --both_sides the reported alternate counts are unaffected
+                self.assertEqual(k.get(f, 0), d.get(f, 0), "%s %s" % (vid, f))
+            changed += (k.get("RS", 0), k.get("RP", 0)) != (d.get("RS", 0), d.get("RP", 0))
+        self.assertGreater(changed, 0, "the zeroing rule never fired on the example data")
+
     def diff(self):
         cmd = ['diff', "-I", "^##fileDate=", expected_out_vcf, out_vcf]
 
