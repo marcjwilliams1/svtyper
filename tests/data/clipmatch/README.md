@@ -13,4 +13,8 @@ outside the regions are marked unmapped. Only the reads each case needs are kept
 | sv2 | reads clipped for other reasons; the clip is the read's own reference continuation, on the wrong side for the breakend (consensus reads) | clips counted by the default matcher, rejected by `--clip_partner_match` |
 | sv3 | clips with low base quality in the clipped bases (uncollapsed reads) | removed by `--clip_min_base_quality 30` |
 
+With `--fragment_counts`, sv1's 25 alternate reads are 19 fragments (FS 8, FP 7, FC 4,
+none with reference evidence), while every sv2 / sv3 "clip" fragment also carries reference
+evidence (FX 9), so they count as reference (AOF 0).
+
 Run with `-T ref.fa -l lib.json --clip_read_support --both_sides --keep_all_ref -m 25`.

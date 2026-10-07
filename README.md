@@ -220,6 +220,19 @@ These only take effect when both `--clip_read_support` and `-T/--ref_fasta` are 
 - `--clip_partner_match`: orientation-aware matching. A clip counts only if (1) its clipped edge is within `--clip_context` bp of a breakend on the read's chromosome; (2) it is on that breakend's junction side (a breakend whose sequence is kept to its left - ALT `t[p[` / `t]p]` - needs a right clip, one kept to its right a left clip; an INV record stands for both junctions, so either side); (3) read away from the junction, it is within the scaled `--clip_max_mismatch` of the partner breakend's junction sequence; and (4) it is strictly closer to that than to the read's own reference continuation past the clip point, so clips at junctions whose partner sequence resembles the local reference (homology) don't count. Off by default; the default matcher is unchanged.
 - `--clip_min_base_quality INT`: minimum mean base quality of the clipped bases. Applies with or without `-T`. Default: `0` (off).
 
+### Fragment counts
+
+`AS` / `ASC` / `AP` / `RS` / `RP` count reads, so one fragment (read pair) can be counted several times: as a split read and a spanning pair, a split read and a clipped read, both mates as reference split reads, or a reference split read and a reference pair. A clipped read also adds at most 0.5 to `ASC` (its missing other piece is treated as a failed half), so `ASC` is about half the number of clipped reads and a single clipped read rounds to 0.
+
+- `--fragment_counts`: also report evidence per fragment, each counted once:
+  - `FS` / `FP` / `FC`: alternate fragments whose strongest evidence is a split read / spanning pair / clipped read (split > span > clip). These don't overlap.
+  - `AOF` = `FS` + `FP` + `FC`; `ROF`: reference fragments (a reference split read or a reference pair).
+  - `FX`: fragments with both alternate and reference evidence. These count as **reference**: a read across the breakpoint as reference, or a pair spanning it concordantly, means the molecule carries reference sequence there. On targeted cfDNA data ~0.1% of true junction fragments had a reference split read, against 4-31% of false ones in control samples.
+  - Fragment allele fraction: `AOF / (AOF + ROF)`. Read-level fields are unchanged; `--keep_all_ref` doesn't affect fragment fields.
+- `--genotype_on_fragments`: compute `QA` / `QR`, and so `GT`, `GQ`, `QUAL` and `AB`, from `AOF` / `ROF`. The read-level counts treat a fragment counted twice as two independent observations, which overstates confidence. Implies `--fragment_counts`; `--split_weight` / `--disc_weight` aren't applied.
+
+Both records of a BND pair are genotyped from the same fragments: use one end (or the max), never the sum.
+
 ## Python Library Usage
 
 
@@ -260,6 +273,8 @@ with open(input_vcf, "r") as inf, open(output_vcf, "w") as outf:
         clip_min_length=11,      # clipped-read matching: minimum clip length (bp)
         clip_partner_match=False,  # orientation-aware clip matching against the partner breakend
         clip_min_base_quality=0,   # minimum mean base quality of clipped bases (0 = off)
+        fragment_counts=False,     # also report FS/FP/FC/AOF/ROF/FX, each fragment counted once
+        genotype_on_fragments=False,  # genotype from AOF/ROF (implies fragment_counts)
         keep_all_ref=False       # True: never zero RS/RP by alternate evidence type
     )
 ```

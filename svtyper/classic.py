@@ -20,6 +20,17 @@ except NameError:
 # --------------------------------------
 # define functions
 
+# FORMAT fields added by --fragment_counts: every fragment (read pair) counted once
+FRAGMENT_FORMATS = [
+    ('FS', 'A', 'Alternate fragments whose strongest evidence is a split read'),
+    ('FP', 'A', 'Alternate fragments whose strongest evidence is a spanning pair (no split read)'),
+    ('FC', 'A', 'Alternate fragments supported only by a clipped read'),
+    ('AOF', 'A', 'Alternate fragments, FS + FP + FC (each fragment counted once)'),
+    ('ROF', 1, 'Reference fragments: reference split read or reference pair (including FX fragments)'),
+    ('FX', 'A', 'Fragments with both alternate and reference evidence, counted as reference (in ROF, not AOF)'),
+]
+
+
 def load_cell_filter(cell_filter_file):
     """Load allowed cell IDs from file, one per line"""
     if cell_filter_file is None:
@@ -139,6 +150,10 @@ description: Compute genotype of structural variants based on breakpoint depth")
                        help='minimum clip length (bp) required before attempting a match; shorter clips are discarded outright since they carry too little sequence information to be matched reliably (requires -T/--ref_fasta) [11]')
     parser.add_argument('--clip_partner_match', action='store_true', default=False,
                        help='orientation-aware clip matching: count a clipped read only if its clip is on the junction side of the breakend it sits at, matches the PARTNER breakend\'s junction sequence, and is closer to it than to the read\'s own reference continuation. Rejects reads clipped for unrelated reasons (end errors, homopolymer slippage) whose clip is just local reference, and clips at junctions with homology (requires -T/--ref_fasta) [off]')
+    parser.add_argument('--fragment_counts', action='store_true', default=False,
+                       help='also report evidence per FRAGMENT (read pair), each counted once: FS / FP / FC = alternate fragments whose strongest evidence is a split read / spanning pair / clipped read (split > span > clip), AOF = their sum, ROF = reference fragments (reference split read or reference pair), FX = fragments with both alternate and reference evidence, which count as reference (the molecule carries reference sequence across the breakpoint). AS / ASC / AP / RS / RP count reads, so one fragment can appear in several of them [off]')
+    parser.add_argument('--genotype_on_fragments', action='store_true', default=False,
+                       help='compute QA / QR, and so GT, GQ, QUAL and AB, from AOF / ROF instead of the read-level counts, which treat a fragment counted twice as two observations. Implies --fragment_counts. --split_weight / --disc_weight are not applied [off]')
     parser.add_argument('--clip_min_base_quality', metavar='INT', type=int, default=0, required=False,
                        help='minimum mean base quality of the clipped bases for a clipped read to be counted; low-quality clips are often sequencing errors that made the aligner soft-clip [0 = off]')
     parser.add_argument('--debug', action='store_true', help=argparse.SUPPRESS)
@@ -251,7 +266,11 @@ def sv_genotype(bam_string,
                 clip_min_length=11,
                 keep_all_ref=False,
                 clip_partner_match=False,
-                clip_min_base_quality=0):
+                clip_min_base_quality=0,
+                fragment_counts=False,
+                genotype_on_fragments=False):
+
+    fragment_counts = fragment_counts or genotype_on_fragments
 
     # Load cell filter if provided
     allowed_cells = load_cell_filter(cell_filter_file)
@@ -363,6 +382,9 @@ def sv_genotype(bam_string,
                 vcf.add_header(header)
                 # if detailed:
                 vcf.add_custom_svtyper_headers()
+                if fragment_counts:
+                    for fid, number, desc in FRAGMENT_FORMATS:
+                        vcf.add_format(fid, number, 'Integer', desc)
 
                 # add the samples in the BAM files to the VCF output
                 for sample in sample_list:
@@ -460,6 +482,8 @@ def sv_genotype(bam_string,
             cell_ids_span = []
             cell_ids_ref_split = []
             cell_ids_ref_span = []
+            # per-fragment counts (--fragment_counts): each fragment counted once
+            frag_split, frag_span, frag_clip, frag_ref, frag_conflict = 0, 0, 0, 0, 0
 
             # ref_ciA = ciA
             # ref_ciB = ciB
@@ -470,6 +494,8 @@ def sv_genotype(bam_string,
                 fragment = read_batch[query_name]
                 # boolean on whether to write the fragment
                 write_fragment = False
+                # evidence this fragment carries, as counted below (for --fragment_counts)
+                has_split = has_span = has_clip = has_ref = False
 
                 # -------------------------------------
                 # Check for split-read evidence
@@ -483,6 +509,7 @@ def sv_genotype(bam_string,
                         p_reference = prob_mapq(read)
                         ref_seq += p_reference
                         n_ref_seq += math.ceil(p_reference)
+                        has_ref = has_ref or p_reference > 0
 
                         if output_cell_ids:
                             cell_ids_ref_split.append(get_cell_id(read))
@@ -548,6 +575,7 @@ def sv_genotype(bam_string,
                         # always counted here regardless of it, rather than being unconditionally
                         # zeroed out below
                         if p_alt > 0:
+                            has_clip = True
                             read_names_clip.append(split.query_name)
                             if output_cell_ids:
                                 cell_ids_clip.append(get_cell_id(split.read))
@@ -556,6 +584,7 @@ def sv_genotype(bam_string,
                     else:
                         alt_seq += p_alt
                         if p_alt > 0.5 and both_sides == True:
+                            has_split = True
                             read_names_split.append(split.query_name)
                             if output_cell_ids:
                                 cell_ids_split.append(get_cell_id(split.read))
@@ -563,6 +592,7 @@ def sv_genotype(bam_string,
                             split.tag_split(p_alt)
                             write_fragment = True
                         elif p_alt > 0.0 and both_sides == False:
+                            has_split = True
                             read_names_split.append(split.query_name)
                             if output_cell_ids:
                                 cell_ids_split.append(get_cell_id(split.read))
@@ -602,6 +632,7 @@ def sv_genotype(bam_string,
                             alt_span += p_alt
 
                             if p_alt > 0.5 and both_sides == True:
+                                has_span = True
                                 read_names_span.append(query_name)
                                 if output_cell_ids:
                                     cell_ids_span.append(get_cell_id(fragment.readA))
@@ -609,6 +640,7 @@ def sv_genotype(bam_string,
                                 fragment.tag_span(p_alt)
                                 write_fragment = True
                             elif p_alt > 0.0 and both_sides == False:
+                                has_span = True
                                 read_names_span.append(query_name)
                                 if output_cell_ids:
                                     cell_ids_span.append(get_cell_id(fragment.readA))
@@ -629,6 +661,7 @@ def sv_genotype(bam_string,
                         alt_span += p_alt
 
                         if p_alt > 0.5 and both_sides == True:
+                            has_span = True
                             read_names_span.append(query_name)
                             if output_cell_ids:
                                 cell_ids_span.append(get_cell_id(fragment.readA))
@@ -636,6 +669,7 @@ def sv_genotype(bam_string,
                             fragment.tag_span(p_alt)
                             write_fragment = True
                         elif p_alt > 0.0 and both_sides == False:
+                            has_span = True
                             read_names_span.append(query_name)
                             if output_cell_ids:
                                 cell_ids_span.append(get_cell_id(fragment.readA))
@@ -668,9 +702,27 @@ def sv_genotype(bam_string,
                             p_reference = p_conc * prob_mapq(fragment.readA) * prob_mapq(fragment.readB)
                             ref_span += (ref_straddle_A + ref_straddle_B) * p_reference / 2
                             n_ref_span += math.ceil((ref_straddle_A + ref_straddle_B) * p_reference / 2)
+                            has_ref = has_ref or p_reference > 0
 
                             if output_cell_ids and (ref_straddle_A or ref_straddle_B):
                                 cell_ids_ref_span.append(get_cell_id(fragment.readA))
+
+                # one class per fragment: strongest alternate evidence, else reference. A
+                # fragment with reference evidence too (a read across the breakpoint as
+                # reference, or a pair spanning it concordantly) carries reference sequence
+                # there, so it counts as reference: on cfDNA data ~0.1% of true junction
+                # fragments had a reference split read vs 4-31% of false ones.
+                if (has_split or has_span or has_clip) and has_ref:
+                    frag_conflict += 1
+                    frag_ref += 1
+                elif has_split:
+                    frag_split += 1
+                elif has_span:
+                    frag_span += 1
+                elif has_clip:
+                    frag_clip += 1
+                elif has_ref:
+                    frag_ref += 1
 
                 # write to BAM if requested
                 if alignment_outpath is not None and  write_fragment:
@@ -706,6 +758,9 @@ def sv_genotype(bam_string,
             if alt_span < 0.5 and alt_seq < 0.5 and alt_clip > 0 and clip_read_support == False:
                 # discount any SV that's only supported by clips if clip_read_support == False
                 alt_clip = 0
+            if frag_split + frag_span == 0 and clip_read_support == False:
+                frag_clip = 0
+            frag_alt = frag_split + frag_span + frag_clip
             
             if both_sides == True:
                 # alt_clip intentionally left untouched here: --both_sides gates split/span
@@ -721,6 +776,8 @@ def sv_genotype(bam_string,
                 alt_splitters = alt_seq + alt_clip
                 QR = int(round(split_weight * ref_seq)) + int(round(disc_weight * ref_span))
                 QA = int(round(split_weight * alt_splitters)) + int(round(disc_weight * alt_span))
+                if genotype_on_fragments:
+                    QR, QA = frag_ref, frag_alt
                 gt_lplist = bayes_gt(QR, QA, is_dup)
                 best, second_best = sorted([ (i, e) for i, e in enumerate(gt_lplist) ], key=lambda x: x[1], reverse=True)[0:2]
                 gt_idx = best[0]
@@ -742,6 +799,10 @@ def sv_genotype(bam_string,
                 var.genotype(sample.name).set_format('ASC', int(round(alt_clip)))
                 var.genotype(sample.name).set_format('RP', int(round(ref_span)))
                 var.genotype(sample.name).set_format('AP', int(round(alt_span)))
+                if fragment_counts:
+                    for fid, value in zip(('FS', 'FP', 'FC', 'AOF', 'ROF', 'FX'),
+                                          (frag_split, frag_span, frag_clip, frag_alt, frag_ref, frag_conflict)):
+                        var.genotype(sample.name).set_format(fid, value)
                 # Update matrix counts if requested
                 if output_matrices and matrix_data is not None:
                     update_matrix_counts(matrix_data['split_ref'], var.var_id, cell_ids_ref_split)
@@ -821,6 +882,9 @@ def sv_genotype(bam_string,
                 var.genotype(sample.name).set_format('QR', 0)
                 var.genotype(sample.name).set_format('QA', 0)
                 var.genotype(sample.name).set_format('AB', '.')
+                if fragment_counts:
+                    for fid in ('FS', 'FP', 'FC', 'AOF', 'ROF', 'FX'):
+                        var.genotype(sample.name).set_format(fid, 0)
 
         # after all samples have been processed, write
         vcf_out.write(var.get_var_string() + '\n')
@@ -898,7 +962,9 @@ def main():
                 args.clip_min_length,
                 args.keep_all_ref,
                 args.clip_partner_match,
-                args.clip_min_base_quality)
+                args.clip_min_base_quality,
+                args.fragment_counts,
+                args.genotype_on_fragments)
 
 # --------------------------------------
 # command-line/console entrypoint
